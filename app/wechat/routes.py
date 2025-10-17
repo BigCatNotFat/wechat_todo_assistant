@@ -60,6 +60,7 @@ def wechat_handler():
             wechat_service = current_app.wechat_service
             llm_service = current_app.llm_service
             todo_service = current_app.todo_service
+            command_service = current_app.command_service
             
             # 解析消息
             msg = wechat_service.parse_message(decrypted_xml)
@@ -69,8 +70,8 @@ def wechat_handler():
                 openid = msg.source
                 user = todo_service.get_or_create_user(openid)
                 
-                # 处理消息并获取回复
-                reply_content = wechat_service.handle_message(msg, llm_service, user.id)
+                # 处理消息并获取回复（传入命令服务）
+                reply_content = wechat_service.handle_message(msg, llm_service, user.id, command_service)
                 
                 # 创建回复
                 if reply_content and reply_content != "success":

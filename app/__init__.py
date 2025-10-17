@@ -13,6 +13,7 @@ from app.services.todo_service import TodoService
 from app.services.llm_service import LLMService
 from app.services.wechat_service import WeChatService
 from app.services.planning_service import PlanningService
+from app.services.command_service import CommandService
 
 
 def create_app(config_name='default'):
@@ -55,6 +56,13 @@ def create_app(config_name='default'):
     
     llm_service = LLMService(app.config, prompt_manager, todo_service)
     app.llm_service = llm_service
+    
+    # 初始化命令服务
+    command_service = CommandService(
+        conversation_service=wechat_service.conversation_service,
+        todo_service=todo_service
+    )
+    app.command_service = command_service
     
     planning_service = PlanningService(todo_service, llm_service, wechat_service)
     app.planning_service = planning_service

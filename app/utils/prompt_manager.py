@@ -5,6 +5,7 @@
 """
 import os
 import yaml
+from datetime import datetime
 
 
 class PromptManager:
@@ -52,6 +53,13 @@ class PromptManager:
             return ''
         
         try:
+            # 如果是系统提示词，自动添加系统时间
+            if key == 'system_prompt':
+                now = datetime.now()
+                kwargs.setdefault('current_time', now.strftime('%Y年%m月%d日 %H:%M:%S'))
+                kwargs.setdefault('current_date', now.strftime('%Y年%m月%d日'))
+                kwargs.setdefault('current_weekday', ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'][now.weekday()])
+            
             # 使用format方法填充模板
             return template.format(**kwargs)
         except KeyError as e:

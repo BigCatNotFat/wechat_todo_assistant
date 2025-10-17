@@ -26,13 +26,13 @@ class LLMService:
         
         # 初始化OpenAI客户端（兼容多种API）
         self.client = OpenAI(
-            api_key=config.LLM_API_KEY,
-            base_url=config.LLM_API_BASE
+            api_key=config['LLM_API_KEY'],
+            base_url=config['LLM_API_BASE']
         )
         
-        self.model = config.LLM_MODEL
-        self.temperature = config.LLM_TEMPERATURE
-        self.max_tokens = config.LLM_MAX_TOKENS
+        self.model = config['LLM_MODEL']
+        self.temperature = config['LLM_TEMPERATURE']
+        self.max_tokens = config['LLM_MAX_TOKENS']
     
     def chat_with_function_calling(self, user_id, user_message, conversation_history=None):
         """
@@ -78,46 +78,55 @@ class LLMService:
                 max_tokens=self.max_tokens
             )
             
-            # 处理响应
-            assistant_message = response.choices[0].message
+            # 创建工具实例（用于执行函数调用）
+            llm_tools = LLMTools(self.todo_service, user_id)
             
-            # 如果大模型需要调用函数
-            if assistant_message.tool_calls:
-                # 创建工具实例
-                llm_tools = LLMTools(self.todo_service, user_id)
+            # 支持多轮工具调用（最多5轮，防止无限循环）
+            max_iterations = 5
+            for iteration in range(max_iterations):
+                # 处理响应
+                assistant_message = response.choices[0].message
                 
-                # 添加助手消息到历史
-                messages.append(assistant_message)
-                
-                # 执行所有函数调用
-                for tool_call in assistant_message.tool_calls:
-                    function_name = tool_call.function.name
-                    function_args = json.loads(tool_call.function.arguments)
+                # 如果大模型需要调用函数
+                if assistant_message.tool_calls:
+                    # 添加助手消息到历史
+                    messages.append(assistant_message)
                     
-                    print(f"执行函数调用: {function_name}({function_args})")
+                    # 执行所有函数调用
+                    for tool_call in assistant_message.tool_calls:
+                        function_name = tool_call.function.name
+                        function_args = json.loads(tool_call.function.arguments)
+                        
+                        print(f"执行函数调用: {function_name}({function_args})")
+                        
+                        # 执行函数
+                        function_result = llm_tools.execute_tool_call(function_name, function_args)
+                        
+                        # 添加函数结果到消息列表
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(function_result, ensure_ascii=False)
+                        })
                     
-                    # 执行函数
-                    function_result = llm_tools.execute_tool_call(function_name, function_args)
+                    # 再次调用大模型，让它基于函数结果生成回复或继续调用工具
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        tools=TOOLS_SCHEMA,
+                        tool_choice="auto",
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens
+                    )
                     
-                    # 添加函数结果到消息列表
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps(function_result, ensure_ascii=False)
-                    })
-                
-                # 再次调用大模型，让它基于函数结果生成回复
-                second_response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens
-                )
-                
-                return second_response.choices[0].message.content
+                    # 继续循环，检查是否还有新的工具调用
+                else:
+                    # 没有工具调用了，返回最终回复
+                    return assistant_message.content
             
-            # 如果不需要调用函数，直接返回回复
-            return assistant_message.content
+            # 达到最大迭代次数，返回最后的回复
+            print(f"警告：达到最大工具调用迭代次数({max_iterations})，强制返回")
+            return response.choices[0].message.content
             
         except Exception as e:
             print(f"大模型调用失败: {e}")
