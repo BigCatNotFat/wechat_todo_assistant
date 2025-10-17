@@ -40,6 +40,7 @@ class LLMService:
         # 判断是否使用 Google Genai SDK
         self.use_genai_sdk = llm_config.get('use_genai_sdk', False)
         self.use_google_search = llm_config.get('use_google_search', False)
+        self.support_vision = llm_config.get('support_vision', False)
         
         # 初始化客户端
         if self.use_genai_sdk and GENAI_AVAILABLE:
@@ -63,12 +64,12 @@ class LLMService:
     
     def _chat_with_genai_sdk(self, user_id, user_message, conversation_history=None):
         """
-        使用 Google Genai SDK 进行对话（支持 Google Search）
+        使用 Google Genai SDK 进行对话（支持 Google Search 和图片理解）
         
         Args:
             user_id: 用户ID
             user_message: 用户消息
-            conversation_history: 对话历史（可选）
+            conversation_history: 对话历史（可选），可能包含图片
             
         Returns:
             大模型的回复文本
@@ -79,25 +80,48 @@ class LLMService:
             total_completion_tokens = 0
             total_tokens = 0
             
-            # 构建系统提示词和用户消息
+            # 构建系统提示词
             system_prompt = self.prompt_manager.get_prompt('system_prompt')
             
-            # 构建完整的提示内容
-            full_prompt = ""
-            if system_prompt:
-                full_prompt += f"{system_prompt}\n\n"
+            # 构建contents列表（支持多模态）
+            contents = []
             
-            # 添加对话历史（简化处理）
+            # 添加系统提示词
+            if system_prompt:
+                contents.append(system_prompt + "\n\n")
+            
+            # 处理对话历史（包括图片）
+            has_images = False
             if conversation_history:
                 for msg in conversation_history:
                     role = msg.get('role', '')
                     content = msg.get('content', '')
+                    image_data = msg.get('image_data')
+                    
+                    # 添加文本
                     if role == 'user':
-                        full_prompt += f"用户: {content}\n"
+                        contents.append(f"用户: {content}\n")
                     elif role == 'assistant':
-                        full_prompt += f"助手: {content}\n"
+                        contents.append(f"助手: {content}\n")
+                    
+                    # 如果有图片且支持vision，添加图片
+                    if image_data and self.support_vision:
+                        has_images = True
+                        try:
+                            image_part = types.Part.from_bytes(
+                                data=image_data['bytes'],
+                                mime_type=image_data['mime_type']
+                            )
+                            contents.append(image_part)
+                            contents.append("[用户发送了图片]\n")
+                        except Exception as e:
+                            print(f"添加历史图片失败: {e}")
             
-            full_prompt += f"用户: {user_message}"
+            # 添加当前用户消息
+            contents.append(f"用户: {user_message}")
+            
+            if has_images:
+                print(f"🖼️ 检测到对话历史中包含 {has_images} 张图片，将发送给模型")
             
             # 配置工具
             tools = []
@@ -114,10 +138,10 @@ class LLMService:
             )
             
             # 调用 Genai API
-            print(f"调用 Gemini API，模型: {self.model}，Google Search: {self.use_google_search}")
+            print(f"调用 Gemini API，模型: {self.model}，Google Search: {self.use_google_search}，Vision: {self.support_vision}")
             response = self.genai_client.models.generate_content(
                 model=self.model,
-                contents=full_prompt,
+                contents=contents,
                 config=config
             )
             

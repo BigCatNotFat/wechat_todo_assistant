@@ -57,7 +57,8 @@ class Config:
             'temperature': 0.7,
             'max_tokens': 10000,
             'use_google_search': True,  # 启用Google搜索功能
-            'use_genai_sdk': True  # 使用Google Genai SDK
+            'use_genai_sdk': True,  # 使用Google Genai SDK
+            'support_vision': True  # 支持图片理解
         }
     }
     

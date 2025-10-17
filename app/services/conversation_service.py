@@ -30,7 +30,7 @@ class ConversationService:
         
         print(f"对话历史服务已启动 - 最多保留{max_history_rounds}轮对话，{max_history_hours}小时内有效")
     
-    def add_message(self, user_id, role, content):
+    def add_message(self, user_id, role, content, image_data=None):
         """
         添加一条消息到对话历史
         
@@ -38,6 +38,7 @@ class ConversationService:
             user_id: 用户ID
             role: 角色 (user/assistant)
             content: 消息内容
+            image_data: 图片数据（可选），格式为 {"bytes": bytes, "mime_type": str}
         """
         with self.lock:
             message = {
@@ -45,6 +46,10 @@ class ConversationService:
                 "content": content,
                 "timestamp": datetime.now()
             }
+            
+            # 如果有图片数据，添加到消息中
+            if image_data:
+                message["image_data"] = image_data
             
             self.conversations[user_id].append(message)
             
@@ -60,7 +65,7 @@ class ConversationService:
             include_timestamp: 是否包含时间戳（默认False，返回给LLM时不需要）
             
         Returns:
-            对话历史列表，格式为 [{"role": "user", "content": "..."}, ...]
+            对话历史列表，格式为 [{"role": "user", "content": "...", "image_data": {...}}, ...]
         """
         with self.lock:
             # 先清理过期记录
@@ -73,11 +78,15 @@ class ConversationService:
             if include_timestamp:
                 return self.conversations[user_id].copy()
             else:
-                # 不包含时间戳，只返回role和content（供LLM使用）
-                return [
-                    {"role": msg["role"], "content": msg["content"]}
-                    for msg in self.conversations[user_id]
-                ]
+                # 不包含时间戳，返回role、content和image_data（供LLM使用）
+                result = []
+                for msg in self.conversations[user_id]:
+                    history_msg = {"role": msg["role"], "content": msg["content"]}
+                    # 如果有图片数据，也包含进去
+                    if "image_data" in msg:
+                        history_msg["image_data"] = msg["image_data"]
+                    result.append(history_msg)
+                return result
     
     def clear_user_history(self, user_id):
         """
