@@ -185,37 +185,6 @@ class WeChatService:
             print(f"发送客服消息异常: {e}")
             return False
     
-    def download_wechat_image(self, media_id):
-        """
-        从微信服务器下载图片
-        
-        Args:
-            media_id: 图片的MediaID
-            
-        Returns:
-            图片字节数据，失败返回None
-        """
-        try:
-            access_token = self.get_access_token()
-            if not access_token:
-                print("无法获取AccessToken，下载图片失败")
-                return None
-            
-            url = f"https://api.weixin.qq.com/cgi-bin/media/get?access_token={access_token}&media_id={media_id}"
-            
-            response = requests.get(url, timeout=30)
-            
-            if response.status_code == 200 and response.headers.get('Content-Type', '').startswith('image/'):
-                print(f"成功下载图片，大小: {len(response.content)} 字节")
-                return response.content
-            else:
-                print(f"下载图片失败: {response.status_code}")
-                return None
-                
-        except Exception as e:
-            print(f"下载图片异常: {e}")
-            return None
-    
     def handle_message(self, msg, llm_service, user_id, command_service=None):
         """
         处理微信消息
@@ -230,7 +199,7 @@ class WeChatService:
             回复内容
         """
         try:
-            # 处理文本消息
+            # 目前只处理文本消息
             if msg.type == 'text':
                 user_message = msg.content.strip()
                 print(f"收到用户 {user_id} 的消息: {user_message}")
@@ -270,59 +239,10 @@ class WeChatService:
                 
                 return reply_content
             
-            elif msg.type == 'image':
-                # 处理图片消息
-                print(f"收到用户 {user_id} 的图片消息")
-                
-                # 检查当前模型是否支持图片
-                if not llm_service.support_vision:
-                    return "抱歉，当前模型不支持图片理解。\n\n💡 提示：请在配置中切换到 'geminiofficial' 模型以使用图片功能。"
-                
-                # 下载图片
-                media_id = msg.media_id
-                image_bytes = self.download_wechat_image(media_id)
-                
-                if not image_bytes:
-                    return "抱歉，图片下载失败，请重试。"
-                
-                # 判断图片类型
-                mime_type = 'image/jpeg'  # 默认JPEG
-                if image_bytes[:4] == b'\x89PNG':
-                    mime_type = 'image/png'
-                elif image_bytes[:3] == b'GIF':
-                    mime_type = 'image/gif'
-                elif image_bytes[:2] == b'\xff\xd8':
-                    mime_type = 'image/jpeg'
-                
-                # 保存图片到对话历史（带有特殊标记）
-                self.conversation_service.add_message(
-                    user_id=user_id,
-                    role='user',
-                    content='[图片]',
-                    image_data={
-                        'bytes': image_bytes,
-                        'mime_type': mime_type
-                    }
-                )
-                
-                print(f"✅ 已保存图片到对话历史，类型: {mime_type}，大小: {len(image_bytes)} 字节")
-                
-                return "✅ 收到图片！\n\n我已经保存了这张图片，请继续发送您的问题或指令，我会结合图片内容来回答您。\n\n💡 如果您想让我分析图片，可以问：\n• 这张图片里有什么？\n• 帮我识别图片中的文字\n• 这是什么东西？"
-            
             elif msg.type == 'event':
                 # 处理事件消息
                 if msg.event == 'subscribe':
-                    welcome_msg = '欢迎关注在办小助手！\n\n我可以帮你：\n\n📝 待办管理\n• 直接告诉我要做什么，我会帮你记录\n• 说"查看待办"来查看任务列表\n• 说"完成XX"来标记任务完成\n• 每天早上9点发送任务规划\n\n'
-                    
-                    # 如果支持图片，添加图片功能说明
-                    if llm_service.support_vision:
-                        welcome_msg += '🖼️ 图片理解\n• 发送图片，我能识别和分析\n• 图片+文字，智能回答问题\n\n'
-                    
-                    if llm_service.use_google_search:
-                        welcome_msg += '🔍 实时搜索\n• 查询最新资讯和信息\n\n'
-                    
-                    welcome_msg += '快来试试吧！'
-                    return welcome_msg
+                    return '欢迎关注在办小助手！\n\n我可以帮你管理待办事项，你可以：\n• 直接告诉我要做什么，我会帮你记录\n• 说"查看待办"来查看任务列表\n• 说"完成XX"来标记任务完成\n• 每天早上9点我会给你发送任务规划\n\n快来试试吧！'
                 elif msg.event == 'unsubscribe':
                     print(f"用户取消关注: {msg.source}")
                     # 清空用户的对话历史

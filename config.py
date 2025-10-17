@@ -56,14 +56,21 @@ class Config:
             'model': 'gemini-2.5-pro',
             'temperature': 0.7,
             'max_tokens': 10000,
-            'use_google_search': True,  # 启用Google搜索功能
-            'use_genai_sdk': True,  # 使用Google Genai SDK
-            'support_vision': True  # 支持图片理解
+            'use_google_search': True,  # 启用搜索功能（通过 Function Calling 方式调用独立的搜索模型）
+            'use_genai_sdk': True  # 使用Google Genai SDK
         }
     }
     
     # 当前使用的模型 (修改这里来切换模型: 'deepseek' 或 'gemini')
     CURRENT_LLM = 'geminiofficial'
+    
+    # ==================== 搜索模型配置 ====================
+    # 当主模型开启 use_google_search 时，使用此配置进行网络搜索
+    SEARCH_MODEL_CONFIG = {
+        'api_key': 'AIzaSyAX4_vnrJvGsHKmrRlYqJfaTa15ZwoVFE4',
+        'model': 'gemini-2.5-flash',  
+        'temperature': 0.7
+    }
     
     # 从选中的模型配置中加载参数
     LLM_API_KEY = LLM_MODELS[CURRENT_LLM]['api_key']

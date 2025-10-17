@@ -40,14 +40,13 @@ class LLMService:
         # 判断是否使用 Google Genai SDK
         self.use_genai_sdk = llm_config.get('use_genai_sdk', False)
         self.use_google_search = llm_config.get('use_google_search', False)
-        self.support_vision = llm_config.get('support_vision', False)
         
-        # 初始化客户端
+        # 初始化主模型客户端
         if self.use_genai_sdk and GENAI_AVAILABLE:
             # 使用 Google Genai SDK
             self.genai_client = genai.Client(api_key=config['LLM_API_KEY'])
             self.client = None
-            print(f"使用 Google Genai SDK，Google Search: {'启用' if self.use_google_search else '禁用'}")
+            print(f"✅ 使用 Google Genai SDK - 主模型: {config['LLM_MODEL']}")
         else:
             # 使用 OpenAI SDK（兼容多种API）
             self.client = OpenAI(
@@ -55,21 +54,73 @@ class LLMService:
                 base_url=config['LLM_API_BASE']
             )
             self.genai_client = None
-            self.use_google_search = False  # OpenAI SDK 不支持 Google Search
-            print(f"使用 OpenAI 兼容 SDK")
+            print(f"✅ 使用 OpenAI 兼容 SDK - 主模型: {config['LLM_MODEL']}")
         
         self.model = config['LLM_MODEL']
         self.temperature = config['LLM_TEMPERATURE']
         self.max_tokens = config['LLM_MAX_TOKENS']
+        
+        # 初始化独立的搜索客户端（如果主模型启用了搜索功能）
+        self.search_client = None
+        self.search_model = None
+        self.search_temperature = None
+        
+        if self.use_google_search and GENAI_AVAILABLE:
+            # 从配置中获取搜索模型参数
+            search_config = config.get('SEARCH_MODEL_CONFIG', {})
+            search_api_key = search_config.get('api_key')
+            
+            if search_api_key:
+                # 初始化搜索专用客户端（所有参数从配置读取）
+                self.search_client = genai.Client(api_key=search_api_key)
+                self.search_model = search_config.get('model', 'gemini-2.0-flash-exp')
+                self.search_temperature = search_config.get('temperature', 0.7)  # 如果配置中没有，默认0.7
+                print(f"🔍 已启用网络搜索功能 - 搜索模型: {self.search_model}, 温度: {self.search_temperature}")
+            else:
+                print(f"⚠️ 警告: 主模型已开启搜索功能，但未配置 SEARCH_MODEL_CONFIG")
+                self.use_google_search = False
+        elif self.use_google_search and not GENAI_AVAILABLE:
+            print(f"⚠️ 警告: 主模型已开启搜索功能，但 google-genai SDK 未安装")
+            self.use_google_search = False
+    
+    def _convert_openai_tools_to_genai(self, openai_tools):
+        """
+        将 OpenAI 格式的工具定义转换为 Google Genai SDK 格式
+        
+        Args:
+            openai_tools: OpenAI 格式的工具列表
+            
+        Returns:
+            Google Genai SDK 格式的函数声明列表
+        """
+        if not GENAI_AVAILABLE:
+            return []
+        
+        function_declarations = []
+        
+        for tool in openai_tools:
+            if tool.get('type') == 'function':
+                func = tool['function']
+                
+                # 转换为 Genai 格式
+                function_declaration = {
+                    'name': func['name'],
+                    'description': func['description'],
+                    'parameters': func['parameters']
+                }
+                
+                function_declarations.append(function_declaration)
+        
+        return function_declarations
     
     def _chat_with_genai_sdk(self, user_id, user_message, conversation_history=None):
         """
-        使用 Google Genai SDK 进行对话（支持 Google Search 和图片理解）
+        使用 Google Genai SDK 进行对话（支持 Google Search 和 Function Calling）
         
         Args:
             user_id: 用户ID
             user_message: 用户消息
-            conversation_history: 对话历史（可选），可能包含图片
+            conversation_history: 对话历史（可选）
             
         Returns:
             大模型的回复文本
@@ -83,52 +134,49 @@ class LLMService:
             # 构建系统提示词
             system_prompt = self.prompt_manager.get_prompt('system_prompt')
             
-            # 构建contents列表（支持多模态）
+            # 构建 contents 列表（使用 types.Content 格式）
             contents = []
             
             # 添加系统提示词
             if system_prompt:
-                contents.append(system_prompt + "\n\n")
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part(text=system_prompt)]
+                ))
             
-            # 处理对话历史（包括图片）
-            has_images = False
+            # 添加对话历史
             if conversation_history:
                 for msg in conversation_history:
                     role = msg.get('role', '')
                     content = msg.get('content', '')
-                    image_data = msg.get('image_data')
                     
-                    # 添加文本
-                    if role == 'user':
-                        contents.append(f"用户: {content}\n")
-                    elif role == 'assistant':
-                        contents.append(f"助手: {content}\n")
+                    # 转换角色名称
+                    genai_role = "model" if role == "assistant" else "user"
                     
-                    # 如果有图片且支持vision，添加图片
-                    if image_data and self.support_vision:
-                        has_images = True
-                        try:
-                            image_part = types.Part.from_bytes(
-                                data=image_data['bytes'],
-                                mime_type=image_data['mime_type']
-                            )
-                            contents.append(image_part)
-                            contents.append("[用户发送了图片]\n")
-                        except Exception as e:
-                            print(f"添加历史图片失败: {e}")
+                    if content:
+                        contents.append(types.Content(
+                            role=genai_role,
+                            parts=[types.Part(text=content)]
+                        ))
             
             # 添加当前用户消息
-            contents.append(f"用户: {user_message}")
-            
-            if has_images:
-                print(f"🖼️ 检测到对话历史中包含 {has_images} 张图片，将发送给模型")
+            contents.append(types.Content(
+                role="user",
+                parts=[types.Part(text=user_message)]
+            ))
             
             # 配置工具
             tools = []
-            if self.use_google_search:
-                # 添加 Google Search 工具
-                grounding_tool = types.Tool(google_search=types.GoogleSearch())
-                tools.append(grounding_tool)
+            
+            # 注意：Google Search 和 Function Calling 不能同时使用（API 限制）
+            # 解决方案：将 Google Search 改为一个 Function Calling 函数
+            
+            # 添加 Function Calling 工具（包含待办管理和搜索）
+            function_declarations = self._convert_openai_tools_to_genai(TOOLS_SCHEMA)
+            if function_declarations:
+                function_tool = types.Tool(function_declarations=function_declarations)
+                tools.append(function_tool)
+                print(f"✅ 已添加 {len(function_declarations)} 个函数调用工具（包含搜索功能）")
             
             # 配置生成参数
             config = types.GenerateContentConfig(
@@ -137,27 +185,91 @@ class LLMService:
                 tools=tools if tools else None
             )
             
-            # 调用 Genai API
-            print(f"调用 Gemini API，模型: {self.model}，Google Search: {self.use_google_search}，Vision: {self.support_vision}")
-            response = self.genai_client.models.generate_content(
-                model=self.model,
-                contents=contents,
-                config=config
+            # 创建工具实例（用于执行函数调用）
+            llm_tools = LLMTools(
+                self.todo_service, 
+                user_id,
+                search_client=self.search_client,  # 传递独立的搜索客户端
+                search_model=self.search_model,  # 传递搜索模型名称
+                search_temperature=self.search_temperature  # 传递搜索温度参数
             )
             
-            # 统计 token（如果可用）
-            if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                usage = response.usage_metadata
-                if hasattr(usage, 'prompt_token_count'):
-                    total_prompt_tokens = usage.prompt_token_count
-                if hasattr(usage, 'candidates_token_count'):
-                    total_completion_tokens = usage.candidates_token_count
-                if hasattr(usage, 'total_token_count'):
-                    total_tokens = usage.total_token_count
-                print(f"第1轮调用 - 输入token: {total_prompt_tokens}, 输出token: {total_completion_tokens}")
+            # 支持多轮函数调用（最多5轮）
+            max_iterations = 5
+            iteration_count = 0
             
-            # 处理回答
-            answer_text = response.text
+            print(f"调用 Gemini API，模型: {self.model}，Function Calling: {len(function_declarations) > 0}")
+            
+            for iteration in range(max_iterations):
+                iteration_count += 1
+                
+                # 调用 Genai API
+                response = self.genai_client.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=config
+                )
+                
+                # 统计 token
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    usage = response.usage_metadata
+                    if hasattr(usage, 'prompt_token_count'):
+                        total_prompt_tokens += usage.prompt_token_count
+                    if hasattr(usage, 'candidates_token_count'):
+                        total_completion_tokens += usage.candidates_token_count
+                    if hasattr(usage, 'total_token_count'):
+                        total_tokens += usage.total_token_count
+                    print(f"第{iteration + 1}轮调用 - 输入token: {usage.prompt_token_count}, 输出token: {usage.candidates_token_count}")
+                
+                # 检查是否有函数调用
+                if response.candidates and response.candidates[0].content.parts:
+                    has_function_call = False
+                    
+                    # 将模型响应添加到对话历史
+                    contents.append(response.candidates[0].content)
+                    
+                    # 处理每个 part
+                    for part in response.candidates[0].content.parts:
+                        if hasattr(part, 'function_call') and part.function_call:
+                            has_function_call = True
+                            function_call = part.function_call
+                            
+                            print(f"🔧 检测到函数调用: {function_call.name}({dict(function_call.args)})")
+                            
+                            # 执行函数
+                            function_result = llm_tools.execute_tool_call(
+                                function_call.name,
+                                dict(function_call.args)
+                            )
+                            
+                            print(f"✅ 函数执行结果: {function_result}")
+                            
+                            # 创建函数响应 part
+                            function_response_part = types.Part.from_function_response(
+                                name=function_call.name,
+                                response={"result": function_result}
+                            )
+                            
+                            # 添加函数结果到对话历史
+                            contents.append(types.Content(
+                                role="user",
+                                parts=[function_response_part]
+                            ))
+                    
+                    # 如果没有函数调用，说明模型已经生成了最终回答
+                    if not has_function_call:
+                        answer_text = response.text
+                        break
+                    
+                    # 继续下一轮（让模型基于函数结果生成回答）
+                else:
+                    # 没有有效响应
+                    answer_text = response.text if hasattr(response, 'text') else "抱歉，我没有理解您的问题。"
+                    break
+            else:
+                # 达到最大迭代次数
+                print(f"⚠️ 警告：达到最大函数调用迭代次数({max_iterations})，强制返回")
+                answer_text = response.text if hasattr(response, 'text') else "抱歉，处理时间过长。"
             
             # 打印 Token 统计
             print(f"=" * 50)
@@ -165,26 +277,7 @@ class LLMService:
             print(f"  总输入token: {total_prompt_tokens}")
             print(f"  总输出token: {total_completion_tokens}")
             print(f"  总计token: {total_tokens}")
-            
-            # 如果启用了 Google Search，打印搜索信息
-            if self.use_google_search and hasattr(response, 'candidates') and response.candidates:
-                candidate = response.candidates[0]
-                if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
-                    metadata = candidate.grounding_metadata
-                    print(f"\n📊 Google Search 信息:")
-                    
-                    # 打印搜索查询
-                    if hasattr(metadata, 'web_search_queries') and metadata.web_search_queries:
-                        print(f"  搜索查询: {metadata.web_search_queries}")
-                    
-                    # 打印来源数量
-                    if hasattr(metadata, 'grounding_chunks') and metadata.grounding_chunks:
-                        print(f"  参考来源数量: {len(metadata.grounding_chunks)}")
-                        # 打印前3个来源
-                        for i, chunk in enumerate(metadata.grounding_chunks[:3]):
-                            if hasattr(chunk, 'web') and chunk.web:
-                                print(f"    [{i+1}] {chunk.web.title}: {chunk.web.uri}")
-            
+            print(f"  函数调用轮次: {iteration_count}")
             print(f"=" * 50)
             
             return answer_text
@@ -257,7 +350,13 @@ class LLMService:
                 print(f"第1轮调用 - 输入token: {response.usage.prompt_tokens}, 输出token: {response.usage.completion_tokens}")
             
             # 创建工具实例（用于执行函数调用）
-            llm_tools = LLMTools(self.todo_service, user_id)
+            llm_tools = LLMTools(
+                self.todo_service, 
+                user_id,
+                search_client=self.search_client,  # 传递独立的搜索客户端
+                search_model=self.search_model,  # 传递搜索模型名称
+                search_temperature=self.search_temperature  # 传递搜索温度参数
+            )
             
             # 支持多轮工具调用（最多5轮，防止无限循环）
             max_iterations = 5
