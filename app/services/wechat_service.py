@@ -4,6 +4,7 @@
 处理微信消息的解析、回复和API调用
 """
 import time
+import re
 import requests
 from wechatpy import parse_message, create_reply
 from wechatpy.replies import TextReply
@@ -31,6 +32,42 @@ class WeChatService:
             max_history_rounds=10,  # 最多保留10轮对话
             max_history_hours=24     # 对话历史保留24小时
         )
+    
+    @staticmethod
+    def clean_markdown(text):
+        """
+        清理文本中的Markdown格式，使其更适合微信文本消息显示
+        
+        Args:
+            text: 原始文本
+            
+        Returns:
+            清理后的纯文本
+        """
+        if not text:
+            return text
+        
+        # 移除粗体标记 **text** 或 __text__
+        text = re.sub(r'\*\*([^\*]+)\*\*', r'\1', text)
+        text = re.sub(r'__([^_]+)__', r'\1', text)
+        
+        # 移除斜体标记 *text* 或 _text_ (但保留作为列表项的星号)
+        text = re.sub(r'(?<!\n)\*([^\*\n]+)\*', r'\1', text)
+        text = re.sub(r'(?<!\n)_([^_\n]+)_', r'\1', text)
+        
+        # 移除行内代码标记 `code`
+        text = re.sub(r'`([^`]+)`', r'\1', text)
+        
+        # 移除标题标记 # 或 ##
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        
+        # 移除删除线标记 ~~text~~
+        text = re.sub(r'~~([^~]+)~~', r'\1', text)
+        
+        # 清理多余的空行（超过2个连续换行）
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        return text.strip()
     
     def get_access_token(self):
         """
@@ -121,6 +158,9 @@ class WeChatService:
                 print("无法获取AccessToken，发送消息失败")
                 return False
             
+            # 清理Markdown格式
+            content = self.clean_markdown(content)
+            
             url = f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={access_token}"
             
             data = {
@@ -186,6 +226,9 @@ class WeChatService:
                     user_message=user_message,
                     conversation_history=conversation_history
                 )
+                
+                # 清理Markdown格式，使其更适合微信显示
+                reply_content = self.clean_markdown(reply_content)
                 
                 # 保存助手回复到对话历史
                 self.conversation_service.add_message(

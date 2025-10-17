@@ -37,19 +37,32 @@ class Config:
             'api_base': 'https://api.deepseek.com',
             'model': 'deepseek-chat',
             'temperature': 0.3,
-            'max_tokens': 1000
+            'max_tokens': 10000,
+            'use_google_search': False,  # 不支持Google搜索
+            'use_genai_sdk': False  # 使用OpenAI SDK
         },
-        'gemini': {
+        'geminihiapi': {
             'api_key': 'sk-h0arJk5As1V9XtG776xbLluxo8TcsCGSydGnhtVRDrRGf7pk',
             'api_base': 'https://hiapi.online/v1',
             'model': 'gemini-2.5-pro-thinking',
             'temperature': 0.7,
-            'max_tokens': 1000
+            'max_tokens': 10000,
+            'use_google_search': False,  # 第三方API不支持Google搜索
+            'use_genai_sdk': False  # 使用OpenAI SDK
+        },
+        'geminiofficial': {
+            'api_key': 'AIzaSyAX4_vnrJvGsHKmrRlYqJfaTa15ZwoVFE4',
+            'api_base': 'https://generativelanguage.googleapis.com/v1beta/openai/',
+            'model': 'gemini-2.5-pro',
+            'temperature': 0.7,
+            'max_tokens': 10000,
+            'use_google_search': True,  # 启用Google搜索功能
+            'use_genai_sdk': True  # 使用Google Genai SDK
         }
     }
     
     # 当前使用的模型 (修改这里来切换模型: 'deepseek' 或 'gemini')
-    CURRENT_LLM = 'gemini'
+    CURRENT_LLM = 'geminiofficial'
     
     # 从选中的模型配置中加载参数
     LLM_API_KEY = LLM_MODELS[CURRENT_LLM]['api_key']

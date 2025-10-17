@@ -7,6 +7,15 @@ import json
 from openai import OpenAI
 from app.utils.llm_tools import TOOLS_SCHEMA, LLMTools
 
+# Google Genai SDK (用于Gemini Google Search)
+try:
+    from google import genai
+    from google.genai import types
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
+    print("警告: google-genai SDK 未安装，Gemini Google Search 功能将不可用")
+
 
 class LLMService:
     """大模型服务"""
@@ -24,15 +33,143 @@ class LLMService:
         self.prompt_manager = prompt_manager
         self.todo_service = todo_service
         
-        # 初始化OpenAI客户端（兼容多种API）
-        self.client = OpenAI(
-            api_key=config['LLM_API_KEY'],
-            base_url=config['LLM_API_BASE']
-        )
+        # 获取当前模型配置
+        current_llm = config['CURRENT_LLM']
+        llm_config = config['LLM_MODELS'][current_llm]
+        
+        # 判断是否使用 Google Genai SDK
+        self.use_genai_sdk = llm_config.get('use_genai_sdk', False)
+        self.use_google_search = llm_config.get('use_google_search', False)
+        
+        # 初始化客户端
+        if self.use_genai_sdk and GENAI_AVAILABLE:
+            # 使用 Google Genai SDK
+            self.genai_client = genai.Client(api_key=config['LLM_API_KEY'])
+            self.client = None
+            print(f"使用 Google Genai SDK，Google Search: {'启用' if self.use_google_search else '禁用'}")
+        else:
+            # 使用 OpenAI SDK（兼容多种API）
+            self.client = OpenAI(
+                api_key=config['LLM_API_KEY'],
+                base_url=config['LLM_API_BASE']
+            )
+            self.genai_client = None
+            self.use_google_search = False  # OpenAI SDK 不支持 Google Search
+            print(f"使用 OpenAI 兼容 SDK")
         
         self.model = config['LLM_MODEL']
         self.temperature = config['LLM_TEMPERATURE']
         self.max_tokens = config['LLM_MAX_TOKENS']
+    
+    def _chat_with_genai_sdk(self, user_id, user_message, conversation_history=None):
+        """
+        使用 Google Genai SDK 进行对话（支持 Google Search）
+        
+        Args:
+            user_id: 用户ID
+            user_message: 用户消息
+            conversation_history: 对话历史（可选）
+            
+        Returns:
+            大模型的回复文本
+        """
+        try:
+            # Token统计
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
+            total_tokens = 0
+            
+            # 构建系统提示词和用户消息
+            system_prompt = self.prompt_manager.get_prompt('system_prompt')
+            
+            # 构建完整的提示内容
+            full_prompt = ""
+            if system_prompt:
+                full_prompt += f"{system_prompt}\n\n"
+            
+            # 添加对话历史（简化处理）
+            if conversation_history:
+                for msg in conversation_history:
+                    role = msg.get('role', '')
+                    content = msg.get('content', '')
+                    if role == 'user':
+                        full_prompt += f"用户: {content}\n"
+                    elif role == 'assistant':
+                        full_prompt += f"助手: {content}\n"
+            
+            full_prompt += f"用户: {user_message}"
+            
+            # 配置工具
+            tools = []
+            if self.use_google_search:
+                # 添加 Google Search 工具
+                grounding_tool = types.Tool(google_search=types.GoogleSearch())
+                tools.append(grounding_tool)
+            
+            # 配置生成参数
+            config = types.GenerateContentConfig(
+                temperature=self.temperature,
+                max_output_tokens=self.max_tokens,
+                tools=tools if tools else None
+            )
+            
+            # 调用 Genai API
+            print(f"调用 Gemini API，模型: {self.model}，Google Search: {self.use_google_search}")
+            response = self.genai_client.models.generate_content(
+                model=self.model,
+                contents=full_prompt,
+                config=config
+            )
+            
+            # 统计 token（如果可用）
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = response.usage_metadata
+                if hasattr(usage, 'prompt_token_count'):
+                    total_prompt_tokens = usage.prompt_token_count
+                if hasattr(usage, 'candidates_token_count'):
+                    total_completion_tokens = usage.candidates_token_count
+                if hasattr(usage, 'total_token_count'):
+                    total_tokens = usage.total_token_count
+                print(f"第1轮调用 - 输入token: {total_prompt_tokens}, 输出token: {total_completion_tokens}")
+            
+            # 处理回答
+            answer_text = response.text
+            
+            # 打印 Token 统计
+            print(f"=" * 50)
+            print(f"本次对话Token统计:")
+            print(f"  总输入token: {total_prompt_tokens}")
+            print(f"  总输出token: {total_completion_tokens}")
+            print(f"  总计token: {total_tokens}")
+            
+            # 如果启用了 Google Search，打印搜索信息
+            if self.use_google_search and hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
+                    metadata = candidate.grounding_metadata
+                    print(f"\n📊 Google Search 信息:")
+                    
+                    # 打印搜索查询
+                    if hasattr(metadata, 'web_search_queries') and metadata.web_search_queries:
+                        print(f"  搜索查询: {metadata.web_search_queries}")
+                    
+                    # 打印来源数量
+                    if hasattr(metadata, 'grounding_chunks') and metadata.grounding_chunks:
+                        print(f"  参考来源数量: {len(metadata.grounding_chunks)}")
+                        # 打印前3个来源
+                        for i, chunk in enumerate(metadata.grounding_chunks[:3]):
+                            if hasattr(chunk, 'web') and chunk.web:
+                                print(f"    [{i+1}] {chunk.web.title}: {chunk.web.uri}")
+            
+            print(f"=" * 50)
+            
+            return answer_text
+            
+        except Exception as e:
+            print(f"Gemini API 调用失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"抱歉，我遇到了一些问题：{str(e)}"
     
     def chat_with_function_calling(self, user_id, user_message, conversation_history=None):
         """
@@ -46,7 +183,17 @@ class LLMService:
         Returns:
             大模型的回复文本
         """
+        # 如果使用 Google Genai SDK，调用专门的方法
+        if self.use_genai_sdk:
+            return self._chat_with_genai_sdk(user_id, user_message, conversation_history)
+        
+        # 以下是原有的 OpenAI SDK 实现
         try:
+            # Token统计
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
+            total_tokens = 0
+            
             # 构建消息列表
             messages = []
             
@@ -77,6 +224,13 @@ class LLMService:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
+            
+            # 统计第一次调用的token
+            if hasattr(response, 'usage') and response.usage:
+                total_prompt_tokens += response.usage.prompt_tokens
+                total_completion_tokens += response.usage.completion_tokens
+                total_tokens += response.usage.total_tokens
+                print(f"第1轮调用 - 输入token: {response.usage.prompt_tokens}, 输出token: {response.usage.completion_tokens}")
             
             # 创建工具实例（用于执行函数调用）
             llm_tools = LLMTools(self.todo_service, user_id)
@@ -119,13 +273,32 @@ class LLMService:
                         max_tokens=self.max_tokens
                     )
                     
+                    # 统计后续调用的token
+                    if hasattr(response, 'usage') and response.usage:
+                        total_prompt_tokens += response.usage.prompt_tokens
+                        total_completion_tokens += response.usage.completion_tokens
+                        total_tokens += response.usage.total_tokens
+                        print(f"第{iteration + 2}轮调用 - 输入token: {response.usage.prompt_tokens}, 输出token: {response.usage.completion_tokens}")
+                    
                     # 继续循环，检查是否还有新的工具调用
                 else:
                     # 没有工具调用了，返回最终回复
+                    print(f"=" * 50)
+                    print(f"本次对话Token统计:")
+                    print(f"  总输入token: {total_prompt_tokens}")
+                    print(f"  总输出token: {total_completion_tokens}")
+                    print(f"  总计token: {total_tokens}")
+                    print(f"=" * 50)
                     return assistant_message.content
             
             # 达到最大迭代次数，返回最后的回复
             print(f"警告：达到最大工具调用迭代次数({max_iterations})，强制返回")
+            print(f"=" * 50)
+            print(f"本次对话Token统计:")
+            print(f"  总输入token: {total_prompt_tokens}")
+            print(f"  总输出token: {total_completion_tokens}")
+            print(f"  总计token: {total_tokens}")
+            print(f"=" * 50)
             return response.choices[0].message.content
             
         except Exception as e:
@@ -174,6 +347,15 @@ class LLMService:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
+            
+            # 统计token使用
+            if hasattr(response, 'usage') and response.usage:
+                print(f"=" * 50)
+                print(f"每日规划Token统计:")
+                print(f"  输入token: {response.usage.prompt_tokens}")
+                print(f"  输出token: {response.usage.completion_tokens}")
+                print(f"  总计token: {response.usage.total_tokens}")
+                print(f"=" * 50)
             
             return response.choices[0].message.content
             
