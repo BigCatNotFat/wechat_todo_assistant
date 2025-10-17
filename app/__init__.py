@@ -57,10 +57,12 @@ def create_app(config_name='default'):
     llm_service = LLMService(app.config, prompt_manager, todo_service)
     app.llm_service = llm_service
     
-    # 初始化命令服务
+    # 初始化命令服务（传入 config 和 app 以支持模型切换）
     command_service = CommandService(
         conversation_service=wechat_service.conversation_service,
-        todo_service=todo_service
+        todo_service=todo_service,
+        app_config=app.config,
+        app_context=app
     )
     app.command_service = command_service
     

@@ -60,6 +60,15 @@ class LLMService:
         self.temperature = config['LLM_TEMPERATURE']
         self.max_tokens = config['LLM_MAX_TOKENS']
         
+        # 思考配置（仅适用于 Gemini 2.5 系列模型）
+        self.thinking_budget = llm_config.get('thinking_budget', None)
+        self.include_thoughts = llm_config.get('include_thoughts', False)
+        
+        if self.thinking_budget is not None and self.use_genai_sdk:
+            budget_desc = "动态思考" if self.thinking_budget == -1 else f"{self.thinking_budget} tokens"
+            thoughts_desc = "启用" if self.include_thoughts else "禁用"
+            print(f"🧠 思考模式: 预算={budget_desc}, 总结输出={thoughts_desc}")
+        
         # 初始化独立的搜索客户端（如果主模型启用了搜索功能）
         self.search_client = None
         self.search_model = None
@@ -179,11 +188,18 @@ class LLMService:
                 print(f"✅ 已添加 {len(function_declarations)} 个函数调用工具（包含搜索功能）")
             
             # 配置生成参数
-            config = types.GenerateContentConfig(
+            generate_config = types.GenerateContentConfig(
                 temperature=self.temperature,
                 max_output_tokens=self.max_tokens,
                 tools=tools if tools else None
             )
+            
+            # 添加思考配置（如果启用）
+            if self.thinking_budget is not None:
+                generate_config.thinking_config = types.ThinkingConfig(
+                    thinking_budget=self.thinking_budget,
+                    include_thoughts=self.include_thoughts
+                )
             
             # 创建工具实例（用于执行函数调用）
             llm_tools = LLMTools(
@@ -207,7 +223,7 @@ class LLMService:
                 response = self.genai_client.models.generate_content(
                     model=self.model,
                     contents=contents,
-                    config=config
+                    config=generate_config
                 )
                 
                 # 统计 token
@@ -243,7 +259,25 @@ class LLMService:
                             )
                             
                             print(f"✅ 函数执行结果: {function_result}")
-                            
+                            # 如果调用的是 search_web 并且成功了，直接格式化结果并返回
+                            if function_call.name == 'search_web' and function_result.get('success'):
+                                # print("⚡️ 检测到 search_web 调用成功，直接返回结果，跳过第二次 LLM 调用。")
+                                
+                                # 从结果中提取答案和来源
+                                answer = function_result.get('answer', '未找到答案。')
+                                sources = function_result.get('sources', [])
+                                
+                                # 格式化最终的回复
+                                final_response = answer
+                                if sources:
+                                    final_response += "\n\n**参考来源:**\n"
+                                    for i, source in enumerate(sources):
+                                        title = source.get('title', '未知标题')
+                                        url = source.get('url', '#')
+                                        final_response += f"{i+1}. [{title}]({url})\n"
+                                
+                                # 直接返回，终止循环
+                                return final_response
                             # 创建函数响应 part
                             function_response_part = types.Part.from_function_response(
                                 name=function_call.name,
@@ -258,7 +292,27 @@ class LLMService:
                     
                     # 如果没有函数调用，说明模型已经生成了最终回答
                     if not has_function_call:
-                        answer_text = response.text
+                        # 提取回答文本和思考总结（如果启用）
+                        answer_text = ""
+                        thought_summary = ""
+                        
+                        for part in response.candidates[0].content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                if hasattr(part, 'thought') and part.thought:
+                                    # 这是思考总结
+                                    thought_summary += part.text
+                                else:
+                                    # 这是最终回答
+                                    answer_text += part.text
+                        
+                        # 如果启用了思考总结输出，打印思考过程
+                        if thought_summary and self.include_thoughts:
+                            print(f"💭 思考总结:\n{thought_summary}\n")
+                        
+                        # 如果没有提取到文本，使用默认的 response.text
+                        if not answer_text:
+                            answer_text = response.text if hasattr(response, 'text') else "抱歉，我没有理解您的问题。"
+                        
                         break
                     
                     # 继续下一轮（让模型基于函数结果生成回答）
@@ -276,6 +330,14 @@ class LLMService:
             print(f"本次对话Token统计:")
             print(f"  总输入token: {total_prompt_tokens}")
             print(f"  总输出token: {total_completion_tokens}")
+            
+            # 如果有思考 token，单独显示
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                if hasattr(response.usage_metadata, 'thoughts_token_count'):
+                    thoughts_tokens = response.usage_metadata.thoughts_token_count
+                    if thoughts_tokens is not None and thoughts_tokens > 0:
+                        print(f"  思考token: {thoughts_tokens}")
+            
             print(f"  总计token: {total_tokens}")
             print(f"  函数调用轮次: {iteration_count}")
             print(f"=" * 50)
@@ -366,6 +428,32 @@ class LLMService:
                 
                 # 如果大模型需要调用函数
                 if assistant_message.tool_calls:
+
+                    if len(assistant_message.tool_calls) == 1 and assistant_message.tool_calls[0].function.name == 'search_web':
+                            # print("⚡️ 检测到 search_web 单独调用，尝试直接返回结果，跳过第二次 LLM 调用。")
+                            tool_call = assistant_message.tool_calls[0]
+                            function_name = tool_call.function.name
+                            function_args = json.loads(tool_call.function.arguments)
+                            
+                            # 执行函数
+                            function_result = llm_tools.execute_tool_call(function_name, function_args)
+
+                            if function_result.get('success'):
+                                # 从结果中提取答案和来源
+                                answer = function_result.get('answer', '未找到答案。')
+                                sources = function_result.get('sources', [])
+                                
+                                # 格式化最终的回复
+                                final_response = answer
+                                if sources:
+                                    final_response += "\n\n**参考来源:**\n"
+                                    for i, source in enumerate(sources):
+                                        title = source.get('title', '未知标题')
+                                        url = source.get('url', '#')
+                                        final_response += f"{i+1}. [{title}]({url})\n"
+                                
+                                # 直接返回，终止循环
+                                return final_response
                     # 添加助手消息到历史
                     messages.append(assistant_message)
                     

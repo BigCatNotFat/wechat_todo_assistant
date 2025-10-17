@@ -4,6 +4,7 @@
 定义可供大模型调用的函数及其Schema
 """
 from datetime import datetime
+import difflib
 
 
 # ==================== 函数Schema定义 ====================
@@ -31,7 +32,14 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "create_todo",
-            "description": "创建一个新的待办事项。当用户表达要做某事、记录某个任务时调用此函数。",
+            "description": (
+                "创建一个新的待办事项。当用户表达要做某事、记录某个任务时调用此函数。\n"
+                "典型触发语：\n"
+                "· 『我要去北京出差』\n"
+                "· 『明天下午四点前把数学作业做完』\n"
+                "· 『明晚 20:00 练习吉他』 等。\n"
+                "· 『2小时后提醒我晾衣服』\n"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -83,7 +91,14 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "complete_todo",
-            "description": "标记一个待办事项为已完成。当用户说完成了某个任务时调用。",
+            "description": (
+                "标记一个待办事项为已完成。当用户说完成了某个任务时调用。\n"
+                "可通过 todo_id（精确）或关键词 query（模糊匹配标题）定位任务。\n"
+                "典型触发语：\n"
+                "· 『把 T0003 标记为已完成』\n"
+                "· 『完成上面的任务』\n"
+
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,12 +106,16 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "待办事项的ID"
                     },
+                    "query": {
+                        "type": "string",
+                        "description": "用于模糊查找待办的关键词（标题中的关键短语）。当不知道todo_id时使用，例如：'开会'、'在803'、'买菜'等"
+                    },
                     "completion_reflection": {
                         "type": "string",
                         "description": "完成感想，用户对完成这个任务的感受或总结，可选"
                     }
                 },
-                "required": ["todo_id"]
+                "required": []
             }
         }
     },
@@ -111,9 +130,13 @@ TOOLS_SCHEMA = [
                     "todo_id": {
                         "type": "integer",
                         "description": "待办事项的ID"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "用于模糊查找待办的关键词（标题中的关键短语）。当不知道todo_id时使用，例如：'开会'、'在803'、'买菜'等"
                     }
                 },
-                "required": ["todo_id"]
+                "required": []
             }
         }
     },
@@ -129,6 +152,10 @@ TOOLS_SCHEMA = [
                         "type": "integer",
                         "description": "待办事项的ID"
                     },
+                    "query": {
+                        "type": "string",
+                        "description": "用于模糊查找待办的关键词（标题中的关键短语）。当不知道todo_id时使用，例如：'开会'、'在803'、'买菜'等"
+                    },
                     "content": {
                         "type": "string",
                         "description": "新的待办内容，可选"
@@ -142,7 +169,7 @@ TOOLS_SCHEMA = [
                         "description": "新的截止日期，格式：YYYY-MM-DD HH:MM:SS，可选"
                     }
                 },
-                "required": ["todo_id"]
+                "required": []
             }
         }
     }
@@ -443,18 +470,79 @@ class LLMTools:
         
         return query.order_by(TodoItem.due_date.asc()).all()
     
-    def complete_todo(self, todo_id, completion_reflection=None):
+    def _fuzzy_match_todo(self, keyword, status='pending', threshold=0.3):
         """
-        完成待办事项
+        模糊匹配待办事项
         
         Args:
-            todo_id: 待办事项ID
+            keyword: 关键词
+            status: 任务状态（默认pending）
+            threshold: 相似度阈值（0-1，默认0.3）
+            
+        Returns:
+            匹配的待办事项ID，如果没有匹配则返回None
+        """
+        # 获取用户的待办任务
+        todos = self.todo_service.get_user_todos(
+            user_id=self.user_id,
+            status=status
+        )
+        
+        if not todos:
+            return None
+        
+        # 模糊匹配
+        keyword_lower = keyword.lower().strip()
+        best_todo_id = None
+        best_score = 0.0
+        
+        for todo in todos:
+            content_lower = todo.content.lower()
+            # 使用 SequenceMatcher 计算相似度
+            score = difflib.SequenceMatcher(None, keyword_lower, content_lower).ratio()
+            
+            if score > best_score:
+                best_todo_id = todo.id
+                best_score = score
+        
+        # 如果最佳匹配分数大于阈值，返回该任务ID
+        if best_score >= threshold:
+            return best_todo_id, best_score
+        
+        return None, 0.0
+    
+    def complete_todo(self, todo_id=None, query=None, completion_reflection=None):
+        """
+        完成待办事项（支持模糊匹配）
+        
+        Args:
+            todo_id: 待办事项ID（优先使用）
+            query: 任务内容关键词（用于模糊匹配，当todo_id为空时使用）
             completion_reflection: 完成感想
             
         Returns:
             操作结果
         """
         try:
+            # 如果没有提供 todo_id，尝试通过 query 模糊匹配
+            if todo_id is None and query:
+                matched_id, score = self._fuzzy_match_todo(query)
+                if matched_id:
+                    todo_id = matched_id
+                    print(f"✨ 模糊匹配成功: 关键词'{query}' -> 任务ID {todo_id} (相似度: {score:.2%})")
+                else:
+                    return {
+                        "success": False,
+                        "message": f"未找到与'{query}'匹配的待办任务，请提供更准确的描述或任务ID"
+                    }
+            
+            if todo_id is None:
+                return {
+                    "success": False,
+                    "message": "请提供任务ID或任务内容关键词"
+                }
+            
+            # 标记任务完成
             todo = self.todo_service.mark_todo_as_complete(todo_id, self.user_id, completion_reflection)
             if todo:
                 return {
@@ -473,17 +561,34 @@ class LLMTools:
                 "message": f"操作失败：{str(e)}"
             }
     
-    def delete_todo(self, todo_id):
+    def delete_todo(self, todo_id=None, query=None):
         """
         删除待办事项
         
         Args:
-            todo_id: 待办事项ID
+            todo_id: 待办事项ID（优先使用）
+            query: 任务内容关键词（用于模糊匹配，当todo_id为空时使用）
             
         Returns:
             操作结果
         """
         try:
+            if todo_id is None and query:
+                matched_id, score = self._fuzzy_match_todo(query)
+                if matched_id:
+                    todo_id = matched_id
+                    print(f"✨ 模糊匹配成功: 关键词'{query}' -> 任务ID {todo_id} (相似度: {score:.2%})")
+                else:
+                    return {
+                        "success": False,
+                        "message": f"未找到与'{query}'匹配的待办任务，请提供更准确的描述或任务ID"
+                    }
+            
+            if todo_id is None:
+                return {
+                    "success": False,
+                    "message": "请提供任务ID或任务内容关键词"
+                }
             success = self.todo_service.delete_todo(todo_id, self.user_id)
             if success:
                 return {
@@ -501,12 +606,13 @@ class LLMTools:
                 "message": f"删除失败：{str(e)}"
             }
     
-    def update_todo(self, todo_id, content=None, notes=None, due_date=None):
+    def update_todo(self, todo_id=None, query=None, content=None, notes=None, due_date=None):
         """
         更新待办事项
         
         Args:
-            todo_id: 待办事项ID
+            todo_id: 待办事项ID（优先使用）
+            query: 任务内容关键词（用于模糊匹配，当todo_id为空时使用）
             content: 新内容
             notes: 新备注
             due_date: 新截止日期
@@ -515,6 +621,22 @@ class LLMTools:
             操作结果
         """
         try:
+            if todo_id is None and query:
+                matched_id, score = self._fuzzy_match_todo(query)
+                if matched_id:
+                    todo_id = matched_id
+                    print(f"✨ 模糊匹配成功: 关键词'{query}' -> 任务ID {todo_id} (相似度: {score:.2%})")
+                else:
+                    return {
+                        "success": False,
+                        "message": f"未找到与'{query}'匹配的待办任务，请提供更准确的描述或任务ID"
+                    }
+            
+            if todo_id is None:
+                return {
+                    "success": False,
+                    "message": "请提供任务ID或任务内容关键词"
+                }
             # 解析截止日期
             due_date_obj = None
             if due_date:
@@ -534,6 +656,7 @@ class LLMTools:
                 due_date=due_date_obj
             )
             
+
             if todo:
                 return {
                     "success": True,
