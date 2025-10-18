@@ -9,6 +9,40 @@ from wechatpy.utils import check_signature
 from wechatpy.exceptions import InvalidSignatureException, InvalidAppIdException
 from wechatpy.crypto import WeChatCrypto
 from app.wechat import wechat_bp
+from collections import deque
+from datetime import datetime, timedelta
+
+# 消息去重：使用双端队列存储最近处理过的消息ID（MsgId）
+# 格式: (msg_id, timestamp)
+processed_messages = deque(maxlen=1000)  # 最多保留1000条记录
+processing_lock = threading.Lock()  # 线程锁，确保并发安全
+
+
+def is_message_processed(msg_id):
+    """
+    检查消息是否已经处理过（去重）
+    
+    Args:
+        msg_id: 消息ID（MsgId）
+        
+    Returns:
+        True: 已处理过（重复消息）
+        False: 未处理过（新消息）
+    """
+    with processing_lock:
+        # 清理5分钟前的旧记录
+        cutoff_time = datetime.now() - timedelta(minutes=5)
+        while processed_messages and processed_messages[0][1] < cutoff_time:
+            processed_messages.popleft()
+        
+        # 检查是否已处理
+        for processed_id, _ in processed_messages:
+            if processed_id == msg_id:
+                return True
+        
+        # 标记为已处理
+        processed_messages.append((msg_id, datetime.now()))
+        return False
 
 
 def process_message(app, decrypted_xml, nonce, timestamp):
@@ -28,6 +62,12 @@ def process_message(app, decrypted_xml, nonce, timestamp):
             msg = wechat_service.parse_message(decrypted_xml)
 
             if msg:
+                # 消息去重：检查MsgId是否已处理过
+                msg_id = getattr(msg, 'id', None)
+                if msg_id and is_message_processed(msg_id):
+                    print(f"⚠️ 检测到重复消息（MsgId: {msg_id}），跳过处理")
+                    return
+                
                 # 获取或创建用户
                 openid = msg.source
                 user = todo_service.get_or_create_user(openid)
@@ -37,17 +77,15 @@ def process_message(app, decrypted_xml, nonce, timestamp):
 
                 # 如果有回复内容，通过客服消息接口发送
                 if reply_content and reply_content != "success":
-                    # 注意：这里不再是创建XML回复，而是调用客服接口主动发送消息
-                    # 你需要在wechat_service中实现一个发送客服消息的方法
-                    # 示例：wechat_service.send_text_message(openid, reply_content)
+                    print(f"准备向 {openid} 发送客服消息: {reply_content[:100]}...")
                     
-                    # 为了演示，我们先打印出来
-                    print(f"准备向 {openid} 发送客服消息: {reply_content}")
+                    # 调用客服消息接口发送回复
+                    success = wechat_service.send_customer_message(openid, reply_content)
                     
-                    # 假设你的wechat_service有一个client实例可以发送消息
-                    # from wechatpy import WeChatClient
-                    # client = WeChatClient(current_app.config['WECHAT_APP_ID'], current_app.config['WECHAT_APP_SECRET'])
-                    # client.message.send_text(openid, reply_content)
+                    if success:
+                        print(f"✅ 成功发送回复给用户 {openid}")
+                    else:
+                        print(f"❌ 发送回复失败，用户: {openid}")
 
 
         except Exception as e:

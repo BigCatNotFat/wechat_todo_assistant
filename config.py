@@ -86,7 +86,7 @@ class Config:
     }
     
     # 当前使用的模型 (修改这里来切换模型: 'deepseek' 或 'gemini')
-    CURRENT_LLM = 'deepseek'
+    CURRENT_LLM = 'geminiofficial-flash'
     
     # ==================== 搜索模型配置 ====================
     # 当主模型开启 use_google_search 时，使用此配置进行网络搜索
