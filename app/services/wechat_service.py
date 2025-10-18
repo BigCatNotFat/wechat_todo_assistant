@@ -209,6 +209,14 @@ class WeChatService:
             # 将消息分段（每段500字符，留出空间给序号标记）
             segments = self._split_message(content, max_length=500)
             
+            # ⚠️ 微信客服消息限制：单次会话最多发送5条消息（错误码45047）
+            MAX_SEGMENTS = 5
+            if len(segments) > MAX_SEGMENTS:
+                print(f"⚠️ 消息分段超过限制（{len(segments)} > {MAX_SEGMENTS}），将截断到{MAX_SEGMENTS}段")
+                segments = segments[:MAX_SEGMENTS]
+                # 在最后一段添加省略提示
+                segments[-1] += "\n\n... (内容过长，已省略部分信息)"
+            
             if len(segments) > 1:
                 print(f"📨 消息过长（{len(content)} 字符），将分 {len(segments)} 段发送")
             
