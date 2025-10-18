@@ -142,13 +142,13 @@ class WeChatService:
             print(f"创建回复失败: {e}")
             return "success"
     
-    def _split_message(self, content, max_length=1600):
+    def _split_message(self, content, max_length=500):
         """
         将长消息分割成多段（每段不超过指定长度）
         
         Args:
             content: 消息内容
-            max_length: 每段最大长度（默认1600，留足够空间给序号标记和安全余量）
+            max_length: 每段最大长度（默认500，微信客服消息限制约600字符，留空间给序号标记）
             
         Returns:
             消息段列表
@@ -205,9 +205,9 @@ class WeChatService:
             # 清理Markdown格式
             content = self.clean_markdown(content)
             
-            # 检查消息长度，微信客服消息限制为 2048 字符
-            # 将消息分段（每段1600字符，留出充足的安全余量）
-            segments = self._split_message(content, max_length=1600)
+            # 检查消息长度，微信客服消息限制约为 600 字符
+            # 将消息分段（每段500字符，留出空间给序号标记）
+            segments = self._split_message(content, max_length=500)
             
             if len(segments) > 1:
                 print(f"📨 消息过长（{len(content)} 字符），将分 {len(segments)} 段发送")
@@ -226,10 +226,10 @@ class WeChatService:
                 # 详细日志：显示每段的实际长度
                 print(f"📝 第 {i+1}/{len(segments)} 段 - 原始长度: {len(segment)}, 加序号后: {len(segment_content)} 字符")
                 
-                # 最后安全检查：如果加上序号后还是超长，强制截断
-                if len(segment_content) > 2040:
-                    print(f"⚠️ 警告：第 {i+1} 段消息超长（{len(segment_content)} 字符），强制截断到2040字符")
-                    segment_content = segment_content[:2040] + "..."
+                # 最后安全检查：如果加上序号后还是超长，强制截断到580字符
+                if len(segment_content) > 580:
+                    print(f"⚠️ 警告：第 {i+1} 段消息超长（{len(segment_content)} 字符），强制截断到580字符")
+                    segment_content = segment_content[:580] + "..."
                     print(f"✂️ 截断后长度: {len(segment_content)} 字符")
                 
                 data = {
