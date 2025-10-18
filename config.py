@@ -25,7 +25,7 @@ class Config:
     WECHAT_TOKEN = 'aVerySecureTokenFor7FloorTop'
     WECHAT_AES_KEY = 'cLQerPqwrZ8ry2Maxf3AfqmTZSVh98mT7xpbDQYC7lH'
     WECHAT_APP_ID = 'wx53180dce891e9e7c'
-    WECHAT_APP_SECRET = 'your_wechat_app_secret_here'
+    WECHAT_APP_SECRET = '756b4ea849c427bdf9bf6552620d738b'
     
     # ==================== 大模型配置 ====================
     # 支持多种大模型API (OpenAI兼容接口)

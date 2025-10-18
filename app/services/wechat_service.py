@@ -5,6 +5,7 @@
 """
 import time
 import re
+import json
 import requests
 from wechatpy import parse_message, create_reply
 from wechatpy.replies import TextReply
@@ -171,7 +172,15 @@ class WeChatService:
                 }
             }
             
-            response = requests.post(url, json=data, timeout=10)
+            # 手动序列化 JSON，确保中文不被转义
+            json_data = json.dumps(data, ensure_ascii=False).encode('utf-8')
+            
+            response = requests.post(
+                url, 
+                data=json_data,
+                headers={'Content-Type': 'application/json; charset=utf-8'},
+                timeout=10
+            )
             result = response.json()
             
             if result.get('errcode') == 0:
