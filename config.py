@@ -22,10 +22,10 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # 微信服务号配置
-    WECHAT_TOKEN = 'aVerySecureTokenFor7FloorTop'
-    WECHAT_AES_KEY = 'cLQerPqwrZ8ry2Maxf3AfqmTZSVh98mT7xpbDQYC7lH'
-    WECHAT_APP_ID = 'wx53180dce891e9e7c'
-    WECHAT_APP_SECRET = '756b4ea849c427bdf9bf6552620d738b'
+    WECHAT_TOKEN = ''
+    WECHAT_AES_KEY = ''
+    WECHAT_APP_ID = ''
+    WECHAT_APP_SECRET = ''
     
     # ==================== 大模型配置 ====================
     # 支持多种大模型API (OpenAI兼容接口)
