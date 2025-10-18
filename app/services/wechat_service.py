@@ -142,9 +142,52 @@ class WeChatService:
             print(f"创建回复失败: {e}")
             return "success"
     
+    def _split_message(self, content, max_length=2000):
+        """
+        将长消息分割成多段（每段不超过指定长度）
+        
+        Args:
+            content: 消息内容
+            max_length: 每段最大长度（默认2000，留出空间添加序号）
+            
+        Returns:
+            消息段列表
+        """
+        if len(content) <= max_length:
+            return [content]
+        
+        segments = []
+        lines = content.split('\n')
+        current_segment = ""
+        
+        for line in lines:
+            # 如果单行就超过长度，需要强制切分
+            if len(line) > max_length:
+                if current_segment:
+                    segments.append(current_segment.strip())
+                    current_segment = ""
+                
+                # 强制切分长行
+                for i in range(0, len(line), max_length):
+                    segments.append(line[i:i+max_length])
+            else:
+                # 检查加上当前行是否超长
+                if len(current_segment) + len(line) + 1 > max_length:
+                    segments.append(current_segment.strip())
+                    current_segment = line + '\n'
+                else:
+                    current_segment += line + '\n'
+        
+        # 添加最后一段
+        if current_segment.strip():
+            segments.append(current_segment.strip())
+        
+        return segments
+    
     def send_customer_message(self, openid, content):
         """
         发送客服消息（主动推送）
+        支持自动分段发送长消息
         
         Args:
             openid: 用户OpenID
@@ -162,36 +205,65 @@ class WeChatService:
             # 清理Markdown格式
             content = self.clean_markdown(content)
             
+            # 检查消息长度，微信客服消息限制为 2048 字符
+            # 将消息分段（保留一些空间用于添加序号标记）
+            segments = self._split_message(content, max_length=2000)
+            
+            if len(segments) > 1:
+                print(f"📨 消息过长（{len(content)} 字符），将分 {len(segments)} 段发送")
+            
             url = f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={access_token}"
             
-            data = {
-                "touser": openid,
-                "msgtype": "text",
-                "text": {
-                    "content": content
+            # 发送每一段消息
+            all_success = True
+            for i, segment in enumerate(segments):
+                # 如果有多段，添加序号标记
+                if len(segments) > 1:
+                    segment_content = f"[{i+1}/{len(segments)}]\n\n{segment}"
+                else:
+                    segment_content = segment
+                
+                data = {
+                    "touser": openid,
+                    "msgtype": "text",
+                    "text": {
+                        "content": segment_content
+                    }
                 }
-            }
+                
+                # 手动序列化 JSON，确保中文不被转义
+                json_data = json.dumps(data, ensure_ascii=False).encode('utf-8')
+                
+                response = requests.post(
+                    url, 
+                    data=json_data,
+                    headers={'Content-Type': 'application/json; charset=utf-8'},
+                    timeout=10
+                )
+                result = response.json()
+                
+                if result.get('errcode') == 0:
+                    print(f"✅ 成功发送第 {i+1}/{len(segments)} 段消息给: {openid}")
+                else:
+                    print(f"❌ 发送第 {i+1}/{len(segments)} 段消息失败: {result}")
+                    all_success = False
+                    # 即使某一段失败，继续发送剩余段
+                
+                # 如果有多段，添加短暂延迟避免频率限制
+                if len(segments) > 1 and i < len(segments) - 1:
+                    time.sleep(0.5)
             
-            # 手动序列化 JSON，确保中文不被转义
-            json_data = json.dumps(data, ensure_ascii=False).encode('utf-8')
-            
-            response = requests.post(
-                url, 
-                data=json_data,
-                headers={'Content-Type': 'application/json; charset=utf-8'},
-                timeout=10
-            )
-            result = response.json()
-            
-            if result.get('errcode') == 0:
-                print(f"成功发送客服消息给: {openid}")
-                return True
+            if all_success:
+                print(f"✅ 成功发送客服消息给: {openid}")
             else:
-                print(f"发送客服消息失败: {result}")
-                return False
+                print(f"⚠️ 部分消息发送失败，用户: {openid}")
+            
+            return all_success
                 
         except Exception as e:
             print(f"发送客服消息异常: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def handle_message(self, msg, llm_service, user_id, command_service=None):
