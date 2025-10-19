@@ -267,12 +267,14 @@ class LLMTools:
             
             print(f"✅ 搜索完成，找到 {len(sources)} 个来源")
             
+            # 返回简化的结果，不包含详细答案和来源（只告知AI已完成搜索）
             return {
                 "success": True,
                 "query": query,
-                "answer": answer,
-                "sources": sources,
-                "message": f"已搜索：{query}"
+                "answer": answer,  # 保留给AI使用，但不显示给用户
+                "sources": sources,  # 保留给AI使用，但不显示给用户
+                "message": f"已搜索：{query}",
+                "for_ai_only": True  # 标记：这些信息仅供AI参考，不直接返回给用户
             }
             
         except Exception as e:

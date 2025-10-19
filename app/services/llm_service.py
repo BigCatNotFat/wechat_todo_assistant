@@ -210,6 +210,9 @@ class LLMService:
                 search_temperature=self.search_temperature  # 传递搜索温度参数
             )
             
+            # 记录所有调用的工具（用于在回复末尾添加标记）
+            called_tools = []
+            
             # 支持多轮函数调用（最多5轮）
             max_iterations = 5
             iteration_count = 0
@@ -252,6 +255,19 @@ class LLMService:
                             
                             print(f"🔧 检测到函数调用: {function_call.name}({dict(function_call.args)})")
                             
+                            # 记录工具调用（用于最终显示）
+                            tool_name_map = {
+                                'search_web': '搜索工具',
+                                'create_todo': '待办创建',
+                                'get_todo_list': '待办查询',
+                                'complete_todo': '待办完成',
+                                'delete_todo': '待办删除',
+                                'update_todo': '待办更新'
+                            }
+                            tool_display_name = tool_name_map.get(function_call.name, function_call.name)
+                            if tool_display_name not in called_tools:
+                                called_tools.append(tool_display_name)
+                            
                             # 执行函数
                             function_result = llm_tools.execute_tool_call(
                                 function_call.name,
@@ -259,25 +275,6 @@ class LLMService:
                             )
                             
                             print(f"✅ 函数执行结果: {function_result}")
-                            # 如果调用的是 search_web 并且成功了，直接格式化结果并返回
-                            if function_call.name == 'search_web' and function_result.get('success'):
-                                # print("⚡️ 检测到 search_web 调用成功，直接返回结果，跳过第二次 LLM 调用。")
-                                
-                                # 从结果中提取答案和来源
-                                answer = function_result.get('answer', '未找到答案。')
-                                sources = function_result.get('sources', [])
-                                
-                                # 格式化最终的回复
-                                final_response = answer
-                                if sources:
-                                    final_response += "\n\n**参考来源:**\n"
-                                    for i, source in enumerate(sources):
-                                        title = source.get('title', '未知标题')
-                                        url = source.get('url', '#')
-                                        final_response += f"{i+1}. [{title}]({url})\n"
-                                
-                                # 直接返回，终止循环
-                                return final_response
                             # 创建函数响应 part
                             function_response_part = types.Part.from_function_response(
                                 name=function_call.name,
@@ -313,6 +310,11 @@ class LLMService:
                         if not answer_text:
                             answer_text = response.text if hasattr(response, 'text') else "抱歉，我没有理解您的问题。"
                         
+                        # 在回复末尾添加工具调用标记
+                        if called_tools:
+                            tools_text = "、".join(called_tools)
+                            answer_text += f"\n\n[已调用{tools_text}]"
+                        
                         break
                     
                     # 继续下一轮（让模型基于函数结果生成回答）
@@ -341,6 +343,11 @@ class LLMService:
             print(f"  总计token: {total_tokens}")
             print(f"  函数调用轮次: {iteration_count}")
             print(f"=" * 50)
+            
+            # 确保工具调用标记被添加（防止某些异常退出情况）
+            if called_tools and "[已调用" not in answer_text:
+                tools_text = "、".join(called_tools)
+                answer_text += f"\n\n[已调用{tools_text}]"
             
             return answer_text
             
@@ -420,6 +427,17 @@ class LLMService:
                 search_temperature=self.search_temperature  # 传递搜索温度参数
             )
             
+            # 记录所有调用的工具（用于在回复末尾添加标记）
+            called_tools = []
+            tool_name_map = {
+                'search_web': '搜索工具',
+                'create_todo': '待办创建',
+                'get_todo_list': '待办查询',
+                'complete_todo': '待办完成',
+                'delete_todo': '待办删除',
+                'update_todo': '待办更新'
+            }
+            
             # 支持多轮工具调用（最多5轮，防止无限循环）
             max_iterations = 5
             for iteration in range(max_iterations):
@@ -428,32 +446,6 @@ class LLMService:
                 
                 # 如果大模型需要调用函数
                 if assistant_message.tool_calls:
-
-                    if len(assistant_message.tool_calls) == 1 and assistant_message.tool_calls[0].function.name == 'search_web':
-                            # print("⚡️ 检测到 search_web 单独调用，尝试直接返回结果，跳过第二次 LLM 调用。")
-                            tool_call = assistant_message.tool_calls[0]
-                            function_name = tool_call.function.name
-                            function_args = json.loads(tool_call.function.arguments)
-                            
-                            # 执行函数
-                            function_result = llm_tools.execute_tool_call(function_name, function_args)
-
-                            if function_result.get('success'):
-                                # 从结果中提取答案和来源
-                                answer = function_result.get('answer', '未找到答案。')
-                                sources = function_result.get('sources', [])
-                                
-                                # 格式化最终的回复
-                                final_response = answer
-                                if sources:
-                                    final_response += "\n\n**参考来源:**\n"
-                                    for i, source in enumerate(sources):
-                                        title = source.get('title', '未知标题')
-                                        url = source.get('url', '#')
-                                        final_response += f"{i+1}. [{title}]({url})\n"
-                                
-                                # 直接返回，终止循环
-                                return final_response
                     # 添加助手消息到历史
                     messages.append(assistant_message)
                     
@@ -463,6 +455,11 @@ class LLMService:
                         function_args = json.loads(tool_call.function.arguments)
                         
                         print(f"执行函数调用: {function_name}({function_args})")
+                        
+                        # 记录工具调用（用于最终显示）
+                        tool_display_name = tool_name_map.get(function_name, function_name)
+                        if tool_display_name not in called_tools:
+                            called_tools.append(tool_display_name)
                         
                         # 执行函数
                         function_result = llm_tools.execute_tool_call(function_name, function_args)
@@ -494,23 +491,37 @@ class LLMService:
                     # 继续循环，检查是否还有新的工具调用
                 else:
                     # 没有工具调用了，返回最终回复
+                    final_content = assistant_message.content
+                    
+                    # 在回复末尾添加工具调用标记
+                    if called_tools:
+                        tools_text = "、".join(called_tools)
+                        final_content += f"\n\n[已调用{tools_text}]"
+                    
                     print(f"=" * 50)
                     print(f"本次对话Token统计:")
                     print(f"  总输入token: {total_prompt_tokens}")
                     print(f"  总输出token: {total_completion_tokens}")
                     print(f"  总计token: {total_tokens}")
                     print(f"=" * 50)
-                    return assistant_message.content
+                    return final_content
             
             # 达到最大迭代次数，返回最后的回复
             print(f"警告：达到最大工具调用迭代次数({max_iterations})，强制返回")
+            
+            final_content = response.choices[0].message.content
+            # 在回复末尾添加工具调用标记
+            if called_tools and "[已调用" not in final_content:
+                tools_text = "、".join(called_tools)
+                final_content += f"\n\n[已调用{tools_text}]"
+            
             print(f"=" * 50)
             print(f"本次对话Token统计:")
             print(f"  总输入token: {total_prompt_tokens}")
             print(f"  总输出token: {total_completion_tokens}")
             print(f"  总计token: {total_tokens}")
             print(f"=" * 50)
-            return response.choices[0].message.content
+            return final_content
             
         except Exception as e:
             print(f"大模型调用失败: {e}")
