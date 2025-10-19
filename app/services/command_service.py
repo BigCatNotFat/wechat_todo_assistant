@@ -25,7 +25,7 @@ class CommandService:
         
         # 定义系统命令映射（命令名 -> 处理函数）
         self.commands = {
-            'clear': self._clear_history,
+            'cls': self._clear_history,
             'help': self._show_help,
             '帮助': self._show_help,
             'reset': self._reset_all,
@@ -119,7 +119,7 @@ class CommandService:
         help_text = """[sys] 📖 系统命令帮助
 
 🔧 系统命令（直接输入即可）：
-• clear - 清空对话历史
+• cls - 清空对话历史
 • help / 帮助 - 显示此帮助信息
 • stats / 统计 - 查看统计信息
 • reset / 重置 - 重置所有数据（慎用）

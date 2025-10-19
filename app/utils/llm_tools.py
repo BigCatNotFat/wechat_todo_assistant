@@ -172,6 +172,138 @@ TOOLS_SCHEMA = [
                 "required": []
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "record_expense",
+            "description": (
+                "记录一笔支出。当用户说花了多少钱、买了什么东西时调用此函数。\n"
+                "典型触发语：\n"
+                "· 『今天花了50块钱买菜』\n"
+                "· 『午饭花了30元』\n"
+                "· 『买了一件衣服200块』\n"
+                "· 『支出100元，打车费』"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {
+                        "type": "number",
+                        "description": "支出金额（正数）"
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "支出说明/备注，例如：买菜、午饭、打车等"
+                    }
+                },
+                "required": ["amount"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "record_income",
+            "description": (
+                "记录一笔收入。当用户说赚了多少钱、收到了多少钱时调用此函数。\n"
+                "典型触发语：\n"
+                "· 『今天收入500元』\n"
+                "· 『工资到账5000』\n"
+                "· 『兼职赚了200块』\n"
+                "· 『收到转账1000元』"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {
+                        "type": "number",
+                        "description": "收入金额（正数）"
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "收入说明/备注，例如：工资、兼职、转账等"
+                    }
+                },
+                "required": ["amount"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "adjust_balance",
+            "description": "矫正账户余额。当用户说要矫正余额、修正账目时调用此函数。可以输入正数或负数来调整余额。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {
+                        "type": "number",
+                        "description": "矫正金额（正数表示增加，负数表示减少）"
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "矫正原因说明"
+                    }
+                },
+                "required": ["amount"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_balance",
+            "description": "查询当前账户余额。当用户询问余额、还剩多少钱时调用此函数。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_transactions",
+            "description": "查询记账记录。可以按类型（支出/收入/矫正）和时间范围筛选。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "transaction_type": {
+                        "type": "string",
+                        "enum": ["expense", "income", "adjustment", "all"],
+                        "description": "记录类型：expense(支出)、income(收入)、adjustment(矫正)、all(全部)，默认为all"
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "查询最近N天的记录，例如7表示最近7天，不传则查询所有"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回记录数量限制，默认10条"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_financial_summary",
+            "description": "获取收支汇总统计。当用户询问本月花了多少、最近收支情况时调用此函数。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "统计最近N天，默认30天（一个月）"
+                    }
+                },
+                "required": []
+            }
+        }
     }
 ]
 
@@ -183,7 +315,7 @@ TOOLS_SCHEMA = [
 class LLMTools:
     """大模型工具类，封装所有可被Function Calling调用的函数"""
     
-    def __init__(self, todo_service, user_id, search_client=None, search_model=None, search_temperature=None):
+    def __init__(self, todo_service, user_id, search_client=None, search_model=None, search_temperature=None, transaction_service=None):
         """
         初始化LLM工具类
         
@@ -193,12 +325,14 @@ class LLMTools:
             search_client: 搜索专用的 Google Genai 客户端（可选）
             search_model: 搜索专用的模型名称（可选）
             search_temperature: 搜索模型的温度参数（可选，从配置文件读取）
+            transaction_service: 记账服务实例（可选）
         """
         self.todo_service = todo_service
         self.user_id = user_id
         self.search_client = search_client
         self.search_model = search_model
         self.search_temperature = search_temperature if search_temperature is not None else 0.7
+        self.transaction_service = transaction_service
     
     def search_web(self, query):
         """
@@ -674,6 +808,231 @@ class LLMTools:
             return {
                 "success": False,
                 "message": f"更新失败：{str(e)}"
+            }
+    
+    def record_expense(self, amount, notes=None):
+        """
+        记录支出
+        
+        Args:
+            amount: 支出金额
+            notes: 支出说明
+            
+        Returns:
+            操作结果字典
+        """
+        try:
+            if not self.transaction_service:
+                return {
+                    "success": False,
+                    "message": "记账服务未初始化"
+                }
+            
+            transaction = self.transaction_service.create_expense(
+                user_id=self.user_id,
+                amount=amount,
+                notes=notes
+            )
+            
+            # 获取当前余额
+            balance = self.transaction_service.get_balance(self.user_id)
+            
+            return {
+                "success": True,
+                "message": f"已记录支出：{abs(transaction.amount)}元",
+                "transaction": transaction.to_dict(),
+                "current_balance": balance
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"记录失败：{str(e)}"
+            }
+    
+    def record_income(self, amount, notes=None):
+        """
+        记录收入
+        
+        Args:
+            amount: 收入金额
+            notes: 收入说明
+            
+        Returns:
+            操作结果字典
+        """
+        try:
+            if not self.transaction_service:
+                return {
+                    "success": False,
+                    "message": "记账服务未初始化"
+                }
+            
+            transaction = self.transaction_service.create_income(
+                user_id=self.user_id,
+                amount=amount,
+                notes=notes
+            )
+            
+            # 获取当前余额
+            balance = self.transaction_service.get_balance(self.user_id)
+            
+            return {
+                "success": True,
+                "message": f"已记录收入：{transaction.amount}元",
+                "transaction": transaction.to_dict(),
+                "current_balance": balance
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"记录失败：{str(e)}"
+            }
+    
+    def adjust_balance(self, amount, notes=None):
+        """
+        资金矫正
+        
+        Args:
+            amount: 矫正金额
+            notes: 矫正说明
+            
+        Returns:
+            操作结果字典
+        """
+        try:
+            if not self.transaction_service:
+                return {
+                    "success": False,
+                    "message": "记账服务未初始化"
+                }
+            
+            transaction = self.transaction_service.adjust_balance(
+                user_id=self.user_id,
+                amount=amount,
+                notes=notes
+            )
+            
+            # 获取当前余额
+            balance = self.transaction_service.get_balance(self.user_id)
+            
+            return {
+                "success": True,
+                "message": f"已矫正余额：{amount}元",
+                "transaction": transaction.to_dict(),
+                "current_balance": balance
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"矫正失败：{str(e)}"
+            }
+    
+    def get_balance(self):
+        """
+        获取当前余额
+        
+        Returns:
+            余额信息字典
+        """
+        try:
+            if not self.transaction_service:
+                return {
+                    "success": False,
+                    "message": "记账服务未初始化"
+                }
+            
+            balance = self.transaction_service.get_balance(self.user_id)
+            
+            return {
+                "success": True,
+                "balance": balance,
+                "message": f"当前余额：{balance}元"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"查询失败：{str(e)}"
+            }
+    
+    def get_transactions(self, transaction_type='all', days=None, limit=10):
+        """
+        获取记账记录
+        
+        Args:
+            transaction_type: 记录类型
+            days: 最近N天
+            limit: 返回数量限制
+            
+        Returns:
+            记账记录列表
+        """
+        try:
+            if not self.transaction_service:
+                return {
+                    "success": False,
+                    "message": "记账服务未初始化"
+                }
+            
+            # 如果类型是all，则传入None
+            type_filter = None if transaction_type == 'all' else transaction_type
+            
+            transactions = self.transaction_service.get_user_transactions(
+                user_id=self.user_id,
+                transaction_type=type_filter,
+                limit=limit,
+                days=days
+            )
+            
+            transaction_list = [t.to_dict() for t in transactions]
+            
+            return {
+                "success": True,
+                "count": len(transaction_list),
+                "transactions": transaction_list,
+                "transaction_type": transaction_type,
+                "days": days
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"查询失败：{str(e)}"
+            }
+    
+    def get_financial_summary(self, days=30):
+        """
+        获取收支汇总统计
+        
+        Args:
+            days: 统计最近N天
+            
+        Returns:
+            收支汇总字典
+        """
+        try:
+            if not self.transaction_service:
+                return {
+                    "success": False,
+                    "message": "记账服务未初始化"
+                }
+            
+            summary = self.transaction_service.get_period_summary(
+                user_id=self.user_id,
+                days=days
+            )
+            
+            # 获取当前总余额
+            balance = self.transaction_service.get_balance(self.user_id)
+            summary['current_balance'] = balance
+            
+            return {
+                "success": True,
+                "summary": summary,
+                "message": f"最近{days}天收支汇总"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"查询失败：{str(e)}"
             }
     
     def execute_tool_call(self, function_name, arguments):

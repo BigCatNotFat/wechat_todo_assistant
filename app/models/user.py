@@ -20,6 +20,9 @@ class User(db.Model):
     # 关联关系：一个用户有多个待办事项
     todo_items = db.relationship('TodoItem', backref='user', lazy='dynamic', cascade='all, delete-orphan')
     
+    # 关联关系：一个用户有多条记账记录
+    transactions = db.relationship('Transaction', backref='user', lazy='dynamic', cascade='all, delete-orphan')
+    
     def __repr__(self):
         return f'<User {self.openid}>'
     

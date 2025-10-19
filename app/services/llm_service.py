@@ -20,7 +20,7 @@ except ImportError:
 class LLMService:
     """大模型服务"""
     
-    def __init__(self, config, prompt_manager, todo_service):
+    def __init__(self, config, prompt_manager, todo_service, transaction_service=None):
         """
         初始化大模型服务
         
@@ -28,10 +28,12 @@ class LLMService:
             config: 配置对象
             prompt_manager: 提示词管理器
             todo_service: 待办事项服务
+            transaction_service: 记账服务（可选）
         """
         self.config = config
         self.prompt_manager = prompt_manager
         self.todo_service = todo_service
+        self.transaction_service = transaction_service
         
         # 获取当前模型配置
         current_llm = config['CURRENT_LLM']
@@ -207,7 +209,8 @@ class LLMService:
                 user_id,
                 search_client=self.search_client,  # 传递独立的搜索客户端
                 search_model=self.search_model,  # 传递搜索模型名称
-                search_temperature=self.search_temperature  # 传递搜索温度参数
+                search_temperature=self.search_temperature,  # 传递搜索温度参数
+                transaction_service=self.transaction_service  # 传递记账服务
             )
             
             # 记录所有调用的工具（用于在回复末尾添加标记）
@@ -262,7 +265,13 @@ class LLMService:
                                 'get_todo_list': '待办查询',
                                 'complete_todo': '待办完成',
                                 'delete_todo': '待办删除',
-                                'update_todo': '待办更新'
+                                'update_todo': '待办更新',
+                                'record_expense': '记录支出',
+                                'record_income': '记录收入',
+                                'adjust_balance': '资金矫正',
+                                'get_balance': '查询余额',
+                                'get_transactions': '查询记账',
+                                'get_financial_summary': '收支汇总'
                             }
                             tool_display_name = tool_name_map.get(function_call.name, function_call.name)
                             if tool_display_name not in called_tools:
@@ -424,7 +433,8 @@ class LLMService:
                 user_id,
                 search_client=self.search_client,  # 传递独立的搜索客户端
                 search_model=self.search_model,  # 传递搜索模型名称
-                search_temperature=self.search_temperature  # 传递搜索温度参数
+                search_temperature=self.search_temperature,  # 传递搜索温度参数
+                transaction_service=self.transaction_service  # 传递记账服务
             )
             
             # 记录所有调用的工具（用于在回复末尾添加标记）
@@ -435,7 +445,13 @@ class LLMService:
                 'get_todo_list': '待办查询',
                 'complete_todo': '待办完成',
                 'delete_todo': '待办删除',
-                'update_todo': '待办更新'
+                'update_todo': '待办更新',
+                'record_expense': '记录支出',
+                'record_income': '记录收入',
+                'adjust_balance': '资金矫正',
+                'get_balance': '查询余额',
+                'get_transactions': '查询记账',
+                'get_financial_summary': '收支汇总'
             }
             
             # 支持多轮工具调用（最多5轮，防止无限循环）

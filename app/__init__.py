@@ -10,6 +10,7 @@ from app.database.db import db
 from app.utils.prompt_manager import PromptManager
 from app.utils.scheduler import Scheduler
 from app.services.todo_service import TodoService
+from app.services.transaction_service import TransactionService
 from app.services.llm_service import LLMService
 from app.services.wechat_service import WeChatService
 from app.services.planning_service import PlanningService
@@ -51,10 +52,13 @@ def create_app(config_name='default'):
     todo_service = TodoService()
     app.todo_service = todo_service
     
+    transaction_service = TransactionService()
+    app.transaction_service = transaction_service
+    
     wechat_service = WeChatService(app.config)
     app.wechat_service = wechat_service
     
-    llm_service = LLMService(app.config, prompt_manager, todo_service)
+    llm_service = LLMService(app.config, prompt_manager, todo_service, transaction_service)
     app.llm_service = llm_service
     
     # 初始化命令服务（传入 config 和 app 以支持模型切换）
