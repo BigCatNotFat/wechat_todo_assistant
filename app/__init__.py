@@ -11,6 +11,7 @@ from app.utils.prompt_manager import PromptManager
 from app.utils.scheduler import Scheduler
 from app.services.todo_service import TodoService
 from app.services.transaction_service import TransactionService
+from app.services.image_session_service import ImageSessionService
 from app.services.llm_service import LLMService
 from app.services.wechat_service import WeChatService
 from app.services.planning_service import PlanningService
@@ -55,7 +56,12 @@ def create_app(config_name='default'):
     transaction_service = TransactionService()
     app.transaction_service = transaction_service
     
-    wechat_service = WeChatService(app.config)
+    # 初始化图片会话服务
+    upload_dir = os.path.join(app.config['BASE_DIR'], 'uploads')
+    image_session_service = ImageSessionService(upload_dir=upload_dir)
+    app.image_session_service = image_session_service
+    
+    wechat_service = WeChatService(app.config, image_session_service=image_session_service)
     app.wechat_service = wechat_service
     
     llm_service = LLMService(app.config, prompt_manager, todo_service, transaction_service)
@@ -110,7 +116,8 @@ def ensure_directories(app):
     directories = [
         os.path.dirname(app.config['PROMPTS_FILE']),
         os.path.dirname(app.config.get('SQLALCHEMY_DATABASE_URI', '').replace('sqlite:///', '')),
-        os.path.dirname(app.config.get('LOG_FILE', 'logs/app.log'))
+        os.path.dirname(app.config.get('LOG_FILE', 'logs/app.log')),
+        os.path.join(app.config['BASE_DIR'], 'uploads')  # 图片上传目录
     ]
     
     for directory in directories:

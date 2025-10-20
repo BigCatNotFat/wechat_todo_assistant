@@ -15,12 +15,13 @@ from app.services.conversation_service import ConversationService
 class WeChatService:
     """微信服务"""
     
-    def __init__(self, config):
+    def __init__(self, config, image_session_service=None):
         """
         初始化微信服务
         
         Args:
             config: 配置对象
+            image_session_service: 图片会话服务实例（可选）
         """
         self.config = config
         self.app_id = config['WECHAT_APP_ID']
@@ -33,6 +34,9 @@ class WeChatService:
             max_history_rounds=10,  # 最多保留10轮对话
             max_history_hours=24     # 对话历史保留24小时
         )
+        
+        # 初始化图片会话服务
+        self.image_session_service = image_session_service
     
     @staticmethod
     def clean_markdown(text):
@@ -297,7 +301,7 @@ class WeChatService:
             回复内容
         """
         try:
-            # 目前只处理文本消息
+            # 处理文本消息
             if msg.type == 'text':
                 user_message = msg.content.strip()
                 print(f"收到用户 {user_id} 的消息: {user_message}")
@@ -307,50 +311,105 @@ class WeChatService:
                     print(f"检测到系统命令: {user_message}")
                     return command_service.execute_command(user_message, user_id)
                 
-                # 获取用户的对话历史
-                conversation_history = self.conversation_service.get_recent_history(user_id)
-                print(f"加载了 {len(conversation_history)} 条历史对话记录")
-                
-                # 保存用户消息到对话历史
-                self.conversation_service.add_message(
-                    user_id=user_id,
-                    role='user',
-                    content=user_message
-                )
-                
-                # 调用大模型处理（传入对话历史）
-                reply_content = llm_service.chat_with_function_calling(
-                    user_id=user_id,
-                    user_message=user_message,
-                    conversation_history=conversation_history
-                )
-                
-                # 清理Markdown格式，使其更适合微信显示
-                reply_content = self.clean_markdown(reply_content)
-                
-                # 保存助手回复到对话历史
-                self.conversation_service.add_message(
-                    user_id=user_id,
-                    role='assistant',
-                    content=reply_content
-                )
-                
-                return reply_content
+                # 检查是否有图片会话
+                if self.image_session_service and self.image_session_service.has_active_session(user_id):
+                    print(f"用户 {user_id} 有活跃的图片会话，将图片和文本一起发送给AI")
+                    
+                    # 获取图片路径列表
+                    image_paths = self.image_session_service.get_session_images(user_id)
+                    print(f"获取到 {len(image_paths)} 张图片: {image_paths}")
+                    
+                    # 调用大模型处理图片和文本
+                    reply_content = llm_service.chat_with_images(
+                        user_id=user_id,
+                        user_message=user_message,
+                        image_paths=image_paths
+                    )
+                    
+                    # 清理Markdown格式
+                    reply_content = self.clean_markdown(reply_content)
+                    
+                    # 清空图片会话（这次图片处理完成）
+                    self.image_session_service.clear_session(user_id)
+                    
+                    return reply_content
+                else:
+                    # 正常的文本对话流程
+                    # 获取用户的对话历史
+                    conversation_history = self.conversation_service.get_recent_history(user_id)
+                    print(f"加载了 {len(conversation_history)} 条历史对话记录")
+                    
+                    # 保存用户消息到对话历史
+                    self.conversation_service.add_message(
+                        user_id=user_id,
+                        role='user',
+                        content=user_message
+                    )
+                    
+                    # 调用大模型处理（传入对话历史）
+                    reply_content = llm_service.chat_with_function_calling(
+                        user_id=user_id,
+                        user_message=user_message,
+                        conversation_history=conversation_history
+                    )
+                    
+                    # 清理Markdown格式，使其更适合微信显示
+                    reply_content = self.clean_markdown(reply_content)
+                    
+                    # 保存助手回复到对话历史
+                    self.conversation_service.add_message(
+                        user_id=user_id,
+                        role='assistant',
+                        content=reply_content
+                    )
+                    
+                    return reply_content
             
+            # 处理图片消息
+            elif msg.type == 'image':
+                print(f"收到用户 {user_id} 的图片消息，MediaId: {msg.media_id}")
+                
+                if not self.image_session_service:
+                    return "抱歉，图片处理功能暂时不可用。"
+                
+                # 获取AccessToken
+                access_token = self.get_access_token()
+                if not access_token:
+                    return "抱歉，无法获取图片，请稍后重试。"
+                
+                # 下载图片
+                image_path = self.image_session_service.download_image_from_wechat(
+                    access_token=access_token,
+                    media_id=msg.media_id,
+                    user_id=user_id
+                )
+                
+                if not image_path:
+                    return "抱歉，图片下载失败，请重新发送。"
+                
+                # 添加图片到会话
+                image_count = self.image_session_service.add_image(user_id, image_path)
+                
+                # 回复用户
+                return f"已接收到图片（共{image_count}张），是否继续发送图片还是根据图片提问？"
+            
+            # 处理事件消息
             elif msg.type == 'event':
-                # 处理事件消息
                 if msg.event == 'subscribe':
-                    return '欢迎关注在办小助手！\n\n我可以帮你管理待办事项，你可以：\n• 直接告诉我要做什么，我会帮你记录\n• 说"查看待办"来查看任务列表\n• 说"完成XX"来标记任务完成\n• 每天早上9点我会给你发送任务规划\n\n快来试试吧！'
+                    return '欢迎关注在办小助手！\n\n我可以帮你管理待办事项，你可以：\n• 直接告诉我要做什么，我会帮你记录\n• 说"查看待办"来查看任务列表\n• 说"完成XX"来标记任务完成\n• 发送图片给我，我可以帮你分析图片内容\n• 每天早上9点我会给你发送任务规划\n\n快来试试吧！'
                 elif msg.event == 'unsubscribe':
                     print(f"用户取消关注: {msg.source}")
                     # 清空用户的对话历史
                     self.conversation_service.clear_user_history(user_id)
+                    # 清空图片会话
+                    if self.image_session_service:
+                        self.image_session_service.clear_session(user_id)
                     return "success"
                 else:
                     return "收到您的消息"
             
             else:
-                return "抱歉，我暂时只能处理文字消息哦~"
+                return "抱歉，我暂时只能处理文字和图片消息哦~"
                 
         except Exception as e:
             print(f"处理消息异常: {e}")

@@ -14,8 +14,15 @@
 - 结合昨日完成情况和今日任务，科学规划优先级
 - 用户可随时请求重新规划
 
+🖼️ **图片理解功能** 🆕
+- 支持接收和分析图片（需使用Gemini模型）
+- 可连续发送多张图片，一次性提问
+- 支持图片说明、内容识别、视觉问答等场景
+- 自动会话管理，不同对话间图片互不干扰
+
 🤖 **大模型集成**
 - 支持OpenAI、智谱GLM、通义千问等OpenAI兼容接口
+- 支持Google Gemini（含图片理解和搜索功能）
 - Function Calling实现智能函数调用
 - 自然语言理解用户需求
 
@@ -49,7 +56,8 @@
     │   ├── llm_service.py     # 大模型服务
     │   ├── todo_service.py    # 待办事项服务
     │   ├── wechat_service.py  # 微信API服务
-    │   └── planning_service.py # 任务规划服务
+    │   ├── planning_service.py # 任务规划服务
+    │   └── image_session_service.py # 图片会话管理服务
     │
     ├── /models/               # 模型层：数据结构
     │   ├── user.py            # 用户模型
@@ -148,6 +156,14 @@ server {
    - 每天早上9点自动推送
    - 或用户主动说："帮我规划今天的任务"
 
+5. **图片理解** 🆕
+   - 用户：发送一张图片
+   - 助手："已接收到图片（共1张），是否继续发送图片还是根据图片提问？"
+   - 用户："这是什么？"
+   - 助手：分析图片并返回详细说明
+   
+   详细说明请查看：[图片处理功能说明.md](图片处理功能说明.md)
+
 ## 大模型配置
 
 ### 使用OpenAI
@@ -173,6 +189,20 @@ LLM_API_KEY=your-qwen-api-key
 LLM_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL=qwen-plus
 ```
+
+### 使用Google Gemini（支持图片理解）
+
+在 `config.py` 中设置：
+
+```python
+CURRENT_LLM = 'geminiofficial-flash'  # 或 'geminiofficial-pro'
+```
+
+Gemini 模型特性：
+- ✅ 支持图片理解
+- ✅ 支持网络搜索
+- ✅ 思考模式（Thinking）
+- ✅ Function Calling
 
 ## 定时任务
 

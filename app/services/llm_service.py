@@ -543,6 +543,107 @@ class LLMService:
             print(f"大模型调用失败: {e}")
             return f"抱歉，我遇到了一些问题：{str(e)}"
     
+    def chat_with_images(self, user_id, user_message, image_paths):
+        """
+        与大模型对话，支持发送图片
+        
+        Args:
+            user_id: 用户ID
+            user_message: 用户消息
+            image_paths: 图片路径列表
+            
+        Returns:
+            大模型的回复文本
+        """
+        # 如果不使用 Google Genai SDK，返回错误提示
+        if not self.use_genai_sdk or not GENAI_AVAILABLE:
+            return "抱歉，当前配置的模型不支持图片处理功能。请切换到 Gemini 模型。"
+        
+        try:
+            print(f"处理图片消息 - 用户: {user_id}, 图片数量: {len(image_paths)}")
+            
+            # 构建 contents 列表
+            contents = []
+            
+            # 添加文本消息
+            contents.append(user_message)
+            
+            # 添加图片
+            for image_path in image_paths:
+                try:
+                    # 读取图片文件
+                    with open(image_path, 'rb') as f:
+                        image_bytes = f.read()
+                    
+                    # 判断图片格式
+                    mime_type = 'image/jpeg'  # 默认
+                    if image_path.lower().endswith('.png'):
+                        mime_type = 'image/png'
+                    elif image_path.lower().endswith('.gif'):
+                        mime_type = 'image/gif'
+                    elif image_path.lower().endswith('.webp'):
+                        mime_type = 'image/webp'
+                    
+                    # 创建图片 Part
+                    image_part = types.Part.from_bytes(
+                        data=image_bytes,
+                        mime_type=mime_type
+                    )
+                    
+                    contents.append(image_part)
+                    print(f"✅ 已添加图片: {image_path} ({mime_type})")
+                    
+                except Exception as e:
+                    print(f"❌ 读取图片失败 ({image_path}): {e}")
+                    continue
+            
+            # 配置生成参数（不使用工具，专注于图片理解）
+            generate_config = types.GenerateContentConfig(
+                temperature=self.temperature,
+                max_output_tokens=self.max_tokens
+            )
+            
+            # 添加思考配置（如果启用）
+            if self.thinking_budget is not None:
+                generate_config.thinking_config = types.ThinkingConfig(
+                    thinking_budget=self.thinking_budget,
+                    include_thoughts=self.include_thoughts
+                )
+            
+            # 调用 Gemini API
+            print(f"调用 Gemini API 进行图片理解，模型: {self.model}")
+            response = self.genai_client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=generate_config
+            )
+            
+            # 统计 token
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = response.usage_metadata
+                print(f"=" * 50)
+                print(f"图片理解Token统计:")
+                if hasattr(usage, 'prompt_token_count'):
+                    print(f"  输入token: {usage.prompt_token_count}")
+                if hasattr(usage, 'candidates_token_count'):
+                    print(f"  输出token: {usage.candidates_token_count}")
+                if hasattr(usage, 'total_token_count'):
+                    print(f"  总计token: {usage.total_token_count}")
+                if hasattr(usage, 'thoughts_token_count') and usage.thoughts_token_count:
+                    print(f"  思考token: {usage.thoughts_token_count}")
+                print(f"=" * 50)
+            
+            # 提取回答文本
+            answer_text = response.text if hasattr(response, 'text') else "抱歉，我无法理解这些图片。"
+            
+            return answer_text
+            
+        except Exception as e:
+            print(f"图片理解失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"抱歉，处理图片时出现了问题：{str(e)}"
+    
     def generate_daily_plan(self, user_id):
         """
         生成每日任务规划
