@@ -319,6 +319,14 @@ class WeChatService:
                     image_paths = self.image_session_service.get_session_images(user_id)
                     print(f"获取到 {len(image_paths)} 张图片: {image_paths}")
                     
+                    # 保存用户消息到对话历史（包含图片提示）
+                    user_message_with_context = f"[附带{len(image_paths)}张图片] {user_message}"
+                    self.conversation_service.add_message(
+                        user_id=user_id,
+                        role='user',
+                        content=user_message_with_context
+                    )
+                    
                     # 调用大模型处理图片和文本
                     reply_content = llm_service.chat_with_images(
                         user_id=user_id,
@@ -328,6 +336,13 @@ class WeChatService:
                     
                     # 清理Markdown格式
                     reply_content = self.clean_markdown(reply_content)
+                    
+                    # 保存助手回复到对话历史
+                    self.conversation_service.add_message(
+                        user_id=user_id,
+                        role='assistant',
+                        content=reply_content
+                    )
                     
                     # 清空图片会话（这次图片处理完成）
                     self.image_session_service.clear_session(user_id)
