@@ -359,7 +359,8 @@ class CommandService:
             llm_service = LLMService(
                 self.app_config,
                 self.app_context.prompt_manager,
-                self.app_context.todo_service
+                self.app_context.todo_service,
+                self.app_context.transaction_service  # 传递记账服务
             )
             
             # 更新应用上下文中的 llm_service
