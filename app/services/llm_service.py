@@ -235,13 +235,17 @@ class LLMService:
                 # 统计 token
                 if hasattr(response, 'usage_metadata') and response.usage_metadata:
                     usage = response.usage_metadata
-                    if hasattr(usage, 'prompt_token_count'):
+                    if hasattr(usage, 'prompt_token_count') and usage.prompt_token_count is not None:
                         total_prompt_tokens += usage.prompt_token_count
-                    if hasattr(usage, 'candidates_token_count'):
+                    if hasattr(usage, 'candidates_token_count') and usage.candidates_token_count is not None:
                         total_completion_tokens += usage.candidates_token_count
-                    if hasattr(usage, 'total_token_count'):
+                    if hasattr(usage, 'total_token_count') and usage.total_token_count is not None:
                         total_tokens += usage.total_token_count
-                    print(f"第{iteration + 1}轮调用 - 输入token: {usage.prompt_token_count}, 输出token: {usage.candidates_token_count}")
+                    
+                    # 安全地获取token计数用于日志
+                    prompt_tokens = usage.prompt_token_count if hasattr(usage, 'prompt_token_count') else 0
+                    completion_tokens = usage.candidates_token_count if hasattr(usage, 'candidates_token_count') else 0
+                    print(f"第{iteration + 1}轮调用 - 输入token: {prompt_tokens}, 输出token: {completion_tokens}")
                 
                 # 检查是否有函数调用
                 if response.candidates and response.candidates[0].content.parts:
@@ -422,10 +426,13 @@ class LLMService:
             
             # 统计第一次调用的token
             if hasattr(response, 'usage') and response.usage:
-                total_prompt_tokens += response.usage.prompt_tokens
-                total_completion_tokens += response.usage.completion_tokens
-                total_tokens += response.usage.total_tokens
-                print(f"第1轮调用 - 输入token: {response.usage.prompt_tokens}, 输出token: {response.usage.completion_tokens}")
+                if response.usage.prompt_tokens is not None:
+                    total_prompt_tokens += response.usage.prompt_tokens
+                if response.usage.completion_tokens is not None:
+                    total_completion_tokens += response.usage.completion_tokens
+                if response.usage.total_tokens is not None:
+                    total_tokens += response.usage.total_tokens
+                print(f"第1轮调用 - 输入token: {response.usage.prompt_tokens or 0}, 输出token: {response.usage.completion_tokens or 0}")
             
             # 创建工具实例（用于执行函数调用）
             llm_tools = LLMTools(
@@ -499,10 +506,13 @@ class LLMService:
                     
                     # 统计后续调用的token
                     if hasattr(response, 'usage') and response.usage:
-                        total_prompt_tokens += response.usage.prompt_tokens
-                        total_completion_tokens += response.usage.completion_tokens
-                        total_tokens += response.usage.total_tokens
-                        print(f"第{iteration + 2}轮调用 - 输入token: {response.usage.prompt_tokens}, 输出token: {response.usage.completion_tokens}")
+                        if response.usage.prompt_tokens is not None:
+                            total_prompt_tokens += response.usage.prompt_tokens
+                        if response.usage.completion_tokens is not None:
+                            total_completion_tokens += response.usage.completion_tokens
+                        if response.usage.total_tokens is not None:
+                            total_tokens += response.usage.total_tokens
+                        print(f"第{iteration + 2}轮调用 - 输入token: {response.usage.prompt_tokens or 0}, 输出token: {response.usage.completion_tokens or 0}")
                     
                     # 继续循环，检查是否还有新的工具调用
                 else:
