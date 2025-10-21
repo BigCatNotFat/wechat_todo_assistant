@@ -641,15 +641,16 @@ class LLMService:
                 parts=user_parts
             ))
             
-            # 配置工具
+            # 配置工具（图片理解场景只使用搜索工具）
             tools = []
             
-            # 添加 Function Calling 工具（包含待办管理和搜索）
-            function_declarations = self._convert_openai_tools_to_genai(TOOLS_SCHEMA)
+            # 只添加搜索工具，不包含待办和记账功能
+            search_tool_schema = [tool for tool in TOOLS_SCHEMA if tool['function']['name'] == 'search_web']
+            function_declarations = self._convert_openai_tools_to_genai(search_tool_schema)
             if function_declarations:
                 function_tool = types.Tool(function_declarations=function_declarations)
                 tools.append(function_tool)
-                print(f"✅ 已添加 {len(function_declarations)} 个函数调用工具（包含搜索功能）")
+                print(f"✅ 已添加搜索工具（图片理解专用）")
             
             # 配置生成参数（支持工具调用和图片理解）
             generate_config = types.GenerateContentConfig(
@@ -665,14 +666,14 @@ class LLMService:
                     include_thoughts=self.include_thoughts
                 )
             
-            # 创建工具实例（用于执行函数调用）
+            # 创建工具实例（图片理解场景只需要搜索功能）
             llm_tools = LLMTools(
-                self.todo_service, 
+                self.todo_service,  # 虽然传入但不会被调用（因为工具列表中没有待办相关）
                 user_id,
                 search_client=self.search_client,
                 search_model=self.search_model,
                 search_temperature=self.search_temperature,
-                transaction_service=self.transaction_service
+                transaction_service=self.transaction_service  # 虽然传入但不会被调用
             )
             
             # 记录所有调用的工具（用于在回复末尾添加标记）
@@ -682,7 +683,7 @@ class LLMService:
             max_iterations = 5
             iteration_count = 0
             
-            print(f"调用 Gemini API 进行图片理解，模型: {self.model}，Function Calling: {len(function_declarations) > 0}")
+            print(f"调用 Gemini API 进行图片理解，模型: {self.model}，Function Calling: 仅搜索工具")
             
             for iteration in range(max_iterations):
                 iteration_count += 1
@@ -724,20 +725,9 @@ class LLMService:
                             
                             print(f"🔧 检测到函数调用: {function_call.name}({dict(function_call.args)})")
                             
-                            # 记录工具调用（用于最终显示）
+                            # 记录工具调用（图片理解场景只有搜索工具）
                             tool_name_map = {
-                                'search_web': '搜索工具',
-                                'create_todo': '待办创建',
-                                'get_todo_list': '待办查询',
-                                'complete_todo': '待办完成',
-                                'delete_todo': '待办删除',
-                                'update_todo': '待办更新',
-                                'record_expense': '记录支出',
-                                'record_income': '记录收入',
-                                'adjust_balance': '资金矫正',
-                                'get_balance': '查询余额',
-                                'get_transactions': '查询记账',
-                                'get_financial_summary': '收支汇总'
+                                'search_web': '搜索工具'
                             }
                             tool_display_name = tool_name_map.get(function_call.name, function_call.name)
                             if tool_display_name not in called_tools:
