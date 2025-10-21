@@ -555,7 +555,7 @@ class LLMService:
     
     def chat_with_images(self, user_id, user_message, image_paths):
         """
-        与大模型对话，支持发送图片
+        与大模型对话，支持发送图片和Function Calling
         
         Args:
             user_id: 用户ID
@@ -571,6 +571,11 @@ class LLMService:
         
         try:
             print(f"处理图片消息 - 用户: {user_id}, 图片数量: {len(image_paths)}")
+            
+            # Token统计
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
+            total_tokens = 0
             
             # 构建 contents 列表
             contents = []
@@ -607,10 +612,21 @@ class LLMService:
                     print(f"❌ 读取图片失败 ({image_path}): {e}")
                     continue
             
-            # 配置生成参数（不使用工具，专注于图片理解）
+            # 配置工具
+            tools = []
+            
+            # 添加 Function Calling 工具（包含待办管理和搜索）
+            function_declarations = self._convert_openai_tools_to_genai(TOOLS_SCHEMA)
+            if function_declarations:
+                function_tool = types.Tool(function_declarations=function_declarations)
+                tools.append(function_tool)
+                print(f"✅ 已添加 {len(function_declarations)} 个函数调用工具（包含搜索功能）")
+            
+            # 配置生成参数（支持工具调用和图片理解）
             generate_config = types.GenerateContentConfig(
                 temperature=self.temperature,
-                max_output_tokens=self.max_tokens
+                max_output_tokens=self.max_tokens,
+                tools=tools if tools else None
             )
             
             # 添加思考配置（如果启用）
@@ -620,31 +636,165 @@ class LLMService:
                     include_thoughts=self.include_thoughts
                 )
             
-            # 调用 Gemini API
-            print(f"调用 Gemini API 进行图片理解，模型: {self.model}")
-            response = self.genai_client.models.generate_content(
-                model=self.model,
-                contents=contents,
-                config=generate_config
+            # 创建工具实例（用于执行函数调用）
+            llm_tools = LLMTools(
+                self.todo_service, 
+                user_id,
+                search_client=self.search_client,
+                search_model=self.search_model,
+                search_temperature=self.search_temperature,
+                transaction_service=self.transaction_service
             )
             
-            # 统计 token
-            if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                usage = response.usage_metadata
-                print(f"=" * 50)
-                print(f"图片理解Token统计:")
-                if hasattr(usage, 'prompt_token_count'):
-                    print(f"  输入token: {usage.prompt_token_count}")
-                if hasattr(usage, 'candidates_token_count'):
-                    print(f"  输出token: {usage.candidates_token_count}")
-                if hasattr(usage, 'total_token_count'):
-                    print(f"  总计token: {usage.total_token_count}")
-                if hasattr(usage, 'thoughts_token_count') and usage.thoughts_token_count:
-                    print(f"  思考token: {usage.thoughts_token_count}")
-                print(f"=" * 50)
+            # 记录所有调用的工具（用于在回复末尾添加标记）
+            called_tools = []
             
-            # 提取回答文本
-            answer_text = response.text if hasattr(response, 'text') else "抱歉，我无法理解这些图片。"
+            # 支持多轮函数调用（最多5轮）
+            max_iterations = 5
+            iteration_count = 0
+            
+            print(f"调用 Gemini API 进行图片理解，模型: {self.model}，Function Calling: {len(function_declarations) > 0}")
+            
+            for iteration in range(max_iterations):
+                iteration_count += 1
+                
+                # 调用 Gemini API
+                response = self.genai_client.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=generate_config
+                )
+                
+                # 统计 token
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    usage = response.usage_metadata
+                    if hasattr(usage, 'prompt_token_count') and usage.prompt_token_count is not None:
+                        total_prompt_tokens += usage.prompt_token_count
+                    if hasattr(usage, 'candidates_token_count') and usage.candidates_token_count is not None:
+                        total_completion_tokens += usage.candidates_token_count
+                    if hasattr(usage, 'total_token_count') and usage.total_token_count is not None:
+                        total_tokens += usage.total_token_count
+                    
+                    # 安全地获取token计数用于日志
+                    prompt_tokens = usage.prompt_token_count if hasattr(usage, 'prompt_token_count') else 0
+                    completion_tokens = usage.candidates_token_count if hasattr(usage, 'candidates_token_count') else 0
+                    print(f"第{iteration + 1}轮调用 - 输入token: {prompt_tokens}, 输出token: {completion_tokens}")
+                
+                # 检查是否有函数调用
+                if response.candidates and response.candidates[0].content.parts:
+                    has_function_call = False
+                    
+                    # 将模型响应添加到对话历史
+                    contents.append(response.candidates[0].content)
+                    
+                    # 处理每个 part
+                    for part in response.candidates[0].content.parts:
+                        if hasattr(part, 'function_call') and part.function_call:
+                            has_function_call = True
+                            function_call = part.function_call
+                            
+                            print(f"🔧 检测到函数调用: {function_call.name}({dict(function_call.args)})")
+                            
+                            # 记录工具调用（用于最终显示）
+                            tool_name_map = {
+                                'search_web': '搜索工具',
+                                'create_todo': '待办创建',
+                                'get_todo_list': '待办查询',
+                                'complete_todo': '待办完成',
+                                'delete_todo': '待办删除',
+                                'update_todo': '待办更新',
+                                'record_expense': '记录支出',
+                                'record_income': '记录收入',
+                                'adjust_balance': '资金矫正',
+                                'get_balance': '查询余额',
+                                'get_transactions': '查询记账',
+                                'get_financial_summary': '收支汇总'
+                            }
+                            tool_display_name = tool_name_map.get(function_call.name, function_call.name)
+                            if tool_display_name not in called_tools:
+                                called_tools.append(tool_display_name)
+                            
+                            # 执行函数
+                            function_result = llm_tools.execute_tool_call(
+                                function_call.name,
+                                dict(function_call.args)
+                            )
+                            
+                            print(f"✅ 函数执行结果: {function_result}")
+                            
+                            # 创建函数响应 part
+                            function_response_part = types.Part.from_function_response(
+                                name=function_call.name,
+                                response={"result": function_result}
+                            )
+                            
+                            # 添加函数结果到对话历史
+                            contents.append(types.Content(
+                                role="user",
+                                parts=[function_response_part]
+                            ))
+                    
+                    # 如果没有函数调用，说明模型已经生成了最终回答
+                    if not has_function_call:
+                        # 提取回答文本和思考总结（如果启用）
+                        answer_text = ""
+                        thought_summary = ""
+                        
+                        for part in response.candidates[0].content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                if hasattr(part, 'thought') and part.thought:
+                                    # 这是思考总结
+                                    thought_summary += part.text
+                                else:
+                                    # 这是最终回答
+                                    answer_text += part.text
+                        
+                        # 如果启用了思考总结输出，打印思考过程
+                        if thought_summary and self.include_thoughts:
+                            print(f"💭 思考总结:\n{thought_summary}\n")
+                        
+                        # 如果没有提取到文本，使用默认的 response.text
+                        if not answer_text:
+                            answer_text = response.text if hasattr(response, 'text') else "抱歉，我无法理解这些图片。"
+                        
+                        # 在回复末尾添加工具调用标记
+                        if called_tools:
+                            tools_text = "、".join(called_tools)
+                            answer_text += f"\n\n[已调用{tools_text}]"
+                        
+                        break
+                    
+                    # 继续下一轮（让模型基于函数结果生成回答）
+                else:
+                    # 没有有效响应
+                    answer_text = response.text if hasattr(response, 'text') else "抱歉，我没有理解您的问题。"
+                    break
+            else:
+                # 达到最大迭代次数
+                print(f"⚠️ 警告：达到最大函数调用迭代次数({max_iterations})，强制返回")
+                answer_text = response.text if hasattr(response, 'text') else "抱歉，处理时间过长。"
+            
+            # 打印 Token 统计
+            print(f"=" * 50)
+            print(f"图片理解Token统计:")
+            print(f"  总输入token: {total_prompt_tokens}")
+            print(f"  总输出token: {total_completion_tokens}")
+            
+            # 如果有思考 token，单独显示
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                if hasattr(response.usage_metadata, 'thoughts_token_count'):
+                    thoughts_tokens = response.usage_metadata.thoughts_token_count
+                    if thoughts_tokens is not None and thoughts_tokens > 0:
+                        print(f"  思考token: {thoughts_tokens}")
+            
+            print(f"  总计token: {total_tokens}")
+            print(f"  函数调用轮次: {iteration_count}")
+            print(f"=" * 50)
+            
+            # 确保工具调用标记被添加（防止某些异常退出情况）
+            if called_tools and "[已调用" not in answer_text:
+                tools_text = "、".join(called_tools)
+                answer_text += f"\n\n[已调用{tools_text}]"
             
             return answer_text
             
