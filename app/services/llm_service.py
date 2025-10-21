@@ -4,6 +4,8 @@
 处理与大语言模型的交互，包括Function Calling
 """
 import json
+from datetime import datetime
+import pytz
 from openai import OpenAI
 from app.utils.llm_tools import TOOLS_SCHEMA, LLMTools
 
@@ -577,13 +579,34 @@ class LLMService:
             total_completion_tokens = 0
             total_tokens = 0
             
+            # 获取当前时间（北京时间）
+            beijing_tz = pytz.timezone('Asia/Shanghai')
+            current_time = datetime.now(beijing_tz)
+            weekday_names = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日']
+            current_weekday = weekday_names[current_time.weekday()]
+            
+            # 获取图片理解专用系统提示词
+            system_prompt = self.prompt_manager.get_prompt(
+                'image_system_prompt',
+                current_time=current_time.strftime('%Y年%m月%d日 %H:%M'),
+                current_weekday=current_weekday
+            )
+            
             # 构建 contents 列表
             contents = []
             
-            # 添加文本消息
-            contents.append(user_message)
+            # 添加系统提示词
+            if system_prompt:
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part(text=system_prompt)]
+                ))
+                print(f"✅ 已添加图片理解系统提示词")
             
-            # 添加图片
+            # 准备用户消息的parts（包含文本和图片）
+            user_parts = [types.Part(text=user_message)]
+            
+            # 添加图片到user_parts
             for image_path in image_paths:
                 try:
                     # 读取图片文件
@@ -605,12 +628,18 @@ class LLMService:
                         mime_type=mime_type
                     )
                     
-                    contents.append(image_part)
+                    user_parts.append(image_part)
                     print(f"✅ 已添加图片: {image_path} ({mime_type})")
                     
                 except Exception as e:
                     print(f"❌ 读取图片失败 ({image_path}): {e}")
                     continue
+            
+            # 将用户消息（文本+图片）作为一个Content添加
+            contents.append(types.Content(
+                role="user",
+                parts=user_parts
+            ))
             
             # 配置工具
             tools = []
