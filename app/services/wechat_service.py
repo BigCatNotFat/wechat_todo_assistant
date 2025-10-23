@@ -309,7 +309,34 @@ class WeChatService:
                 # ✅ 优先检查是否是系统命令
                 if command_service and command_service.is_system_command(user_message):
                     print(f"检测到系统命令: {user_message}")
-                    return command_service.execute_command(user_message, user_id)
+                    
+                    # 检查是否是会清除历史的命令（cls、reset等）
+                    command_lower = user_message.strip().lower()
+                    is_clear_command = command_lower in ['cls', 'reset', '重置']
+                    
+                    # 对于非清除历史的命令，先保存用户消息
+                    if not is_clear_command:
+                        self.conversation_service.add_message(
+                            user_id=user_id,
+                            role='user',
+                            content=user_message
+                        )
+                    
+                    # 执行系统命令
+                    reply_content = command_service.execute_command(user_message, user_id)
+                    
+                    # 对于非清除历史的命令，保存回复到对话历史
+                    # 移除 [sys] 标记后再保存，让对话更自然
+                    if not is_clear_command and reply_content:
+                        # 去除 [sys] 标记（如果有）
+                        clean_reply = reply_content.replace('[sys] ', '').strip()
+                        self.conversation_service.add_message(
+                            user_id=user_id,
+                            role='assistant',
+                            content=clean_reply
+                        )
+                    
+                    return reply_content
                 
                 # 检查是否有图片会话
                 if self.image_session_service and self.image_session_service.has_active_session(user_id):

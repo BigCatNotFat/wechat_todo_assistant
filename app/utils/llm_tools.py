@@ -54,10 +54,10 @@ TOOLS_SCHEMA = [
                     },
                     "due_date": {
                         "type": "string",
-                        "description": "截止日期，格式：YYYY-MM-DD HH:MM:SS，可选。例如'今天完成数学作业'，其截止日期为2025-09-10 23:59:59"
+                        "description": "截止日期，格式：YYYY-MM-DD HH:MM:SS，必填。如果用户明确指定了时间（如'今天完成数学作业'），则设置为具体时间（如2025-09-10 23:59:59）；如果用户没有明确说截止日期，则设置为'无限期'表示无限期的截止日期。"
                     }
                 },
-                "required": ["content"]
+                "required": ["content", "due_date"]
             }
         }
     },
