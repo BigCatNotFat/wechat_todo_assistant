@@ -412,6 +412,11 @@ class CommandService:
         try:
             # 导入必要的模块
             from datetime import datetime, timedelta
+            import pytz
+            
+            # 获取北京时间
+            beijing_tz = pytz.timezone('Asia/Shanghai')
+            current_time = datetime.now(beijing_tz)
             
             # 获取今天和明天的任务
             today_todos = self.todo_service.get_today_todos(user_id)
@@ -473,7 +478,7 @@ class CommandService:
                 'task_planning_prompt',
                 today_tasks=today_text,
                 tomorrow_tasks=tomorrow_text,
-                current_time=datetime.now().strftime('%Y年%m月%d日 %H:%M')
+                current_time=current_time.strftime('%Y年%m月%d日 %H:%M')
             )
             
             print(f"=" * 50)
@@ -481,6 +486,8 @@ class CommandService:
             print(f"今天任务数: {len(today_todos)}")
             print(f"明天任务数: {len(tomorrow_todos)}")
             print(f"提示词长度: {len(planning_prompt)} 字符")
+            print(f"使用模型: {llm_service.model}")
+            print(f"配置参数: temperature={llm_service.temperature}, max_tokens={llm_service.max_tokens}")
             print(f"=" * 50)
             
             # 调用 LLM 生成规划（不使用function calling，纯文本对话）
@@ -500,9 +507,10 @@ class CommandService:
                     )
                 ]
                 
+                # 使用当前模型的配置（从 llm_service 获取）
                 generate_config = types.GenerateContentConfig(
-                    temperature=0.7,
-                    max_output_tokens=8000  # 增加到 8000，确保有足够空间生成详细规划
+                    temperature=llm_service.temperature,
+                    max_output_tokens=llm_service.max_tokens
                 )
                 
                 print(f"🤖 调用 Gemini API 生成任务规划...")
@@ -568,8 +576,8 @@ class CommandService:
                         {"role": "system", "content": "你是一个专业的任务规划助手，善于分析任务的轻重缓急，制定科学合理的执行计划。"},
                         {"role": "user", "content": planning_prompt}
                     ],
-                    temperature=0.7,
-                    max_tokens=8000  # 增加到 8000，确保有足够空间生成详细规划
+                    temperature=llm_service.temperature,
+                    max_tokens=llm_service.max_tokens
                 )
                 
                 plan_text = response.choices[0].message.content
