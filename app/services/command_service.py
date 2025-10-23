@@ -502,7 +502,7 @@ class CommandService:
                 
                 generate_config = types.GenerateContentConfig(
                     temperature=0.7,
-                    max_output_tokens=2000
+                    max_output_tokens=8000  # 增加到 8000，确保有足够空间生成详细规划
                 )
                 
                 print(f"🤖 调用 Gemini API 生成任务规划...")
@@ -569,7 +569,7 @@ class CommandService:
                         {"role": "user", "content": planning_prompt}
                     ],
                     temperature=0.7,
-                    max_tokens=2000
+                    max_tokens=8000  # 增加到 8000，确保有足够空间生成详细规划
                 )
                 
                 plan_text = response.choices[0].message.content
