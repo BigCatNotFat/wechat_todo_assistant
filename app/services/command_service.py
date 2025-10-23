@@ -476,6 +476,13 @@ class CommandService:
                 current_time=datetime.now().strftime('%Y年%m月%d日 %H:%M')
             )
             
+            print(f"=" * 50)
+            print(f"📋 生成任务规划 - 用户ID: {user_id}")
+            print(f"今天任务数: {len(today_todos)}")
+            print(f"明天任务数: {len(tomorrow_todos)}")
+            print(f"提示词长度: {len(planning_prompt)} 字符")
+            print(f"=" * 50)
+            
             # 调用 LLM 生成规划（不使用function calling，纯文本对话）
             # 使用 OpenAI SDK 的简单对话模式
             if llm_service.use_genai_sdk:
@@ -483,10 +490,13 @@ class CommandService:
                 from google import genai
                 from google.genai import types
                 
+                # 添加系统提示词（指导输出格式）
+                system_instruction = "你是一个专业的任务规划助手，善于分析任务的轻重缓急，制定科学合理的执行计划。重要：请使用纯文本格式输出，不要使用Markdown格式（如**粗体**、*斜体*等），使用emoji和换行来组织内容。"
+                
                 contents = [
                     types.Content(
                         role="user",
-                        parts=[types.Part(text=planning_prompt)]
+                        parts=[types.Part(text=system_instruction + "\n\n" + planning_prompt)]
                     )
                 ]
                 
@@ -495,16 +505,36 @@ class CommandService:
                     max_output_tokens=2000
                 )
                 
+                print(f"🤖 调用 Gemini API 生成任务规划...")
                 response = llm_service.genai_client.models.generate_content(
                     model=llm_service.model,
                     contents=contents,
                     config=generate_config
                 )
                 
-                plan_text = response.text if hasattr(response, 'text') else "抱歉，无法生成规划。"
+                # 健壮地提取响应文本
+                plan_text = ""
+                if response and response.candidates:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content') and candidate.content:
+                        for part in candidate.content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                plan_text += part.text
+                
+                # 如果没有提取到文本，尝试直接访问 response.text
+                if not plan_text and hasattr(response, 'text') and response.text:
+                    plan_text = response.text
+                
+                # 如果还是没有，返回默认消息
+                if not plan_text:
+                    plan_text = "抱歉，无法生成任务规划。请稍后再试。"
+                    print(f"⚠️ 警告: 未能从响应中提取文本，响应对象: {response}")
+                else:
+                    print(f"✅ 成功生成规划文本，长度: {len(plan_text)} 字符")
                 
             else:
                 # 使用 OpenAI SDK
+                print(f"🤖 调用 OpenAI 兼容 API 生成任务规划...")
                 response = llm_service.client.chat.completions.create(
                     model=llm_service.model,
                     messages=[
@@ -514,7 +544,13 @@ class CommandService:
                     temperature=0.7,
                     max_tokens=2000
                 )
+                
                 plan_text = response.choices[0].message.content
+                if not plan_text:
+                    plan_text = "抱歉，无法生成任务规划。请稍后再试。"
+                    print(f"⚠️ 警告: OpenAI 响应内容为空")
+                else:
+                    print(f"✅ 成功生成规划文本，长度: {len(plan_text)} 字符")
             
             # 添加系统标记
             result = f"[sys] 📋 任务规划建议\n\n{plan_text}"
