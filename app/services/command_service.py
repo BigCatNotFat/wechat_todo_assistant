@@ -512,23 +512,50 @@ class CommandService:
                     config=generate_config
                 )
                 
+                print(f"📥 收到 API 响应")
+                
                 # 健壮地提取响应文本
                 plan_text = ""
-                if response and response.candidates:
-                    candidate = response.candidates[0]
-                    if hasattr(candidate, 'content') and candidate.content:
-                        for part in candidate.content.parts:
-                            if hasattr(part, 'text') and part.text:
-                                plan_text += part.text
                 
-                # 如果没有提取到文本，尝试直接访问 response.text
-                if not plan_text and hasattr(response, 'text') and response.text:
-                    plan_text = response.text
+                # 方式1（推荐）: 直接使用 response.text 属性
+                try:
+                    if response and hasattr(response, 'text'):
+                        plan_text = response.text
+                        if plan_text:
+                            print(f"   ✓ 使用 response.text 成功获取内容")
+                except Exception as e:
+                    print(f"   ✗ 访问 response.text 失败: {e}")
+                
+                # 方式2: 如果方式1失败，从 candidates 中提取
+                if not plan_text:
+                    print(f"   → 尝试从 candidates 中提取...")
+                    if response and hasattr(response, 'candidates') and response.candidates:
+                        print(f"   ✓ 响应包含 {len(response.candidates)} 个候选项")
+                        candidate = response.candidates[0]
+                        
+                        # 检查是否有 finish_reason（可能被安全过滤器阻止）
+                        if hasattr(candidate, 'finish_reason'):
+                            print(f"   ✓ 完成原因: {candidate.finish_reason}")
+                        
+                        if hasattr(candidate, 'content') and candidate.content:
+                            print(f"   ✓ 候选项包含内容")
+                            # 检查 parts 是否存在且不为 None
+                            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                                print(f"   ✓ 内容包含 {len(candidate.content.parts)} 个部分")
+                                for part in candidate.content.parts:
+                                    if hasattr(part, 'text') and part.text:
+                                        plan_text += part.text
+                            else:
+                                print(f"   ✗ 内容的 parts 为空或不存在")
+                        else:
+                            print(f"   ✗ 候选项内容为空")
+                    else:
+                        print(f"   ✗ 响应没有候选项")
                 
                 # 如果还是没有，返回默认消息
                 if not plan_text:
-                    plan_text = "抱歉，无法生成任务规划。请稍后再试。"
-                    print(f"⚠️ 警告: 未能从响应中提取文本，响应对象: {response}")
+                    plan_text = "抱歉，AI 无法生成任务规划。这可能是因为：\n1. API 响应异常\n2. 内容被安全过滤器拦截\n\n请稍后再试，或联系管理员检查日志。"
+                    print(f"⚠️ 警告: 未能从响应中提取文本")
                 else:
                     print(f"✅ 成功生成规划文本，长度: {len(plan_text)} 字符")
                 
