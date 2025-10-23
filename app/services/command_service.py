@@ -53,6 +53,9 @@ class CommandService:
         # 支持固定命令
         if msg in self.commands:
             return True
+        # 支持带参数的 plan 命令：plan xxx
+        if msg.startswith('plan ') or msg.startswith('规划 '):
+            return True
         # 支持模型切换命令：use flash, use pro, use promax 等
         if msg.startswith('use '):
             return True
@@ -73,6 +76,16 @@ class CommandService:
             命令执行结果（文本）
         """
         command = message.strip().lower()
+        original_message = message.strip()  # 保留原始消息（含大小写）
+        
+        # 处理带参数的 plan 命令
+        if command.startswith('plan '):
+            user_note = original_message[5:].strip()  # 提取 "plan " 后面的内容
+            return self._generate_plan(user_id, user_note=user_note)
+        
+        if command.startswith('规划 '):
+            user_note = original_message[3:].strip()  # 提取 "规划 " 后面的内容（中文占2个字符，空格1个）
+            return self._generate_plan(user_id, user_note=user_note)
         
         # 处理模型切换命令
         if command.startswith('use '):
@@ -396,12 +409,13 @@ class CommandService:
             traceback.print_exc()
             return f"[sys] ❌ 切换模型失败：{str(e)}"
     
-    def _generate_plan(self, user_id):
+    def _generate_plan(self, user_id, user_note=None):
         """
         生成任务规划
         
         Args:
             user_id: 用户ID
+            user_note: 用户的额外备注（如："我今天比较累"）
             
         Returns:
             规划文本
@@ -481,10 +495,16 @@ class CommandService:
                 current_time=current_time.strftime('%Y年%m月%d日 %H:%M')
             )
             
+            # 如果用户提供了额外备注，添加到提示词中
+            if user_note:
+                planning_prompt += f"\n\n【用户补充说明】\n{user_note}\n\n请在规划时考虑上述用户的情况。"
+            
             print(f"=" * 50)
             print(f"📋 生成任务规划 - 用户ID: {user_id}")
             print(f"今天任务数: {len(today_todos)}")
             print(f"明天任务数: {len(tomorrow_todos)}")
+            if user_note:
+                print(f"用户备注: {user_note}")
             print(f"提示词长度: {len(planning_prompt)} 字符")
             print(f"使用模型: {llm_service.model}")
             print(f"配置参数: temperature={llm_service.temperature}, max_tokens={llm_service.max_tokens}")
