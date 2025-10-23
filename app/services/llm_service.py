@@ -843,7 +843,7 @@ class LLMService:
             # 获取今天的待办任务
             today_todos = self.todo_service.get_today_todos(user_id)
             today_tasks = "\n".join([
-                f"- [{todo.priority}] {todo.content}" for todo in today_todos
+                f"- {todo.content}" for todo in today_todos
             ]) if today_todos else "无"
             
             # 获取规划提示词
@@ -853,31 +853,93 @@ class LLMService:
                 today_tasks=today_tasks
             )
             
-            # 调用大模型生成规划
-            messages = [
-                {"role": "system", "content": self.prompt_manager.get_prompt('system_prompt')},
-                {"role": "user", "content": prompt}
-            ]
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            # 统计token使用
-            if hasattr(response, 'usage') and response.usage:
-                print(f"=" * 50)
-                print(f"每日规划Token统计:")
-                print(f"  输入token: {response.usage.prompt_tokens}")
-                print(f"  输出token: {response.usage.completion_tokens}")
-                print(f"  总计token: {response.usage.total_tokens}")
-                print(f"=" * 50)
-            
-            return response.choices[0].message.content
+            # 根据使用的 SDK 调用不同的方法
+            if self.use_genai_sdk:
+                # 使用 Google Genai SDK
+                system_instruction = "你是一个专业的任务规划助手。请使用纯文本格式输出，不要使用Markdown格式。"
+                
+                contents = [
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=system_instruction + "\n\n" + prompt)]
+                    )
+                ]
+                
+                generate_config = types.GenerateContentConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=self.max_tokens
+                )
+                
+                print(f"🤖 调用 Gemini API 生成每日规划...")
+                response = self.genai_client.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=generate_config
+                )
+                
+                # 提取响应文本
+                plan_text = ""
+                try:
+                    if response and hasattr(response, 'text'):
+                        plan_text = response.text
+                except Exception as e:
+                    print(f"提取 response.text 失败: {e}")
+                    # 尝试从 candidates 提取
+                    if response and hasattr(response, 'candidates') and response.candidates:
+                        candidate = response.candidates[0]
+                        if hasattr(candidate, 'content') and candidate.content:
+                            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                                for part in candidate.content.parts:
+                                    if hasattr(part, 'text') and part.text:
+                                        plan_text += part.text
+                
+                if not plan_text:
+                    plan_text = "抱歉，无法生成今日规划。"
+                
+                # 统计token使用
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    usage = response.usage_metadata
+                    print("=" * 50)
+                    print(f"每日规划Token统计:")
+                    if hasattr(usage, 'prompt_token_count'):
+                        print(f"  输入token: {usage.prompt_token_count}")
+                    if hasattr(usage, 'candidates_token_count'):
+                        print(f"  输出token: {usage.candidates_token_count}")
+                    if hasattr(usage, 'total_token_count'):
+                        print(f"  总计token: {usage.total_token_count}")
+                    print("=" * 50)
+                
+                return plan_text
+                
+            else:
+                # 使用 OpenAI SDK
+                messages = [
+                    {"role": "system", "content": self.prompt_manager.get_prompt('system_prompt')},
+                    {"role": "user", "content": prompt}
+                ]
+                
+                print(f"🤖 调用 OpenAI 兼容 API 生成每日规划...")
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens
+                )
+                
+                # 统计token使用
+                if hasattr(response, 'usage') and response.usage:
+                    print(f"=" * 50)
+                    print(f"每日规划Token统计:")
+                    print(f"  输入token: {response.usage.prompt_tokens}")
+                    print(f"  输出token: {response.usage.completion_tokens}")
+                    print(f"  总计token: {response.usage.total_tokens}")
+                    print(f"=" * 50)
+                
+                return response.choices[0].message.content
             
         except Exception as e:
             print(f"生成每日规划失败: {e}")
+            import traceback
+            traceback.print_exc()
             return "抱歉，无法生成今日规划。"
 
