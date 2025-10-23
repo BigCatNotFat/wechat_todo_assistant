@@ -39,6 +39,7 @@ TOOLS_SCHEMA = [
                 "· 『明天下午四点前把数学作业做完』\n"
                 "· 『明晚 20:00 练习吉他』 等。\n"
                 "· 『2小时后提醒我晾衣服』\n"
+                "· 『今天完成数学作业』\n"
             ),
             "parameters": {
                 "type": "object",
@@ -53,7 +54,7 @@ TOOLS_SCHEMA = [
                     },
                     "due_date": {
                         "type": "string",
-                        "description": "截止日期，格式：YYYY-MM-DD HH:MM:SS，可选"
+                        "description": "截止日期，格式：YYYY-MM-DD HH:MM:SS，可选。例如'今天完成数学作业'，其截止日期为2025-09-10 23:59:59"
                     }
                 },
                 "required": ["content"]

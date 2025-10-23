@@ -191,6 +191,29 @@ class TodoService:
         ).order_by(TodoItem.completed_at.desc()).all()
     
     @staticmethod
+    def get_tomorrow_todos(user_id):
+        """
+        获取明天的待办事项（未完成的）
+        
+        Args:
+            user_id: 用户ID
+            
+        Returns:
+            TodoItem对象列表
+        """
+        from datetime import timedelta
+        tomorrow_start = (datetime.now() + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_end = tomorrow_start.replace(hour=23, minute=59, second=59)
+        
+        # 获取所有未完成且截止日期在明天的待办
+        return TodoItem.query.filter_by(
+            user_id=user_id,
+            status='pending'
+        ).filter(
+            TodoItem.due_date.between(tomorrow_start, tomorrow_end)
+        ).order_by(TodoItem.due_date.asc()).all()
+    
+    @staticmethod
     def get_or_create_user(openid, nickname=None):
         """
         获取或创建用户

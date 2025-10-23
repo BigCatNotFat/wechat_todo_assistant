@@ -35,6 +35,8 @@ class CommandService:
             'models': self._list_models,
             'model': self._show_current_model,
             '模型': self._show_current_model,
+            'plan': self._generate_plan,
+            '规划': self._generate_plan,
         }
     
     def is_system_command(self, message):
@@ -123,6 +125,7 @@ class CommandService:
 • help / 帮助 - 显示此帮助信息
 • stats / 统计 - 查看统计信息
 • reset / 重置 - 重置所有数据（慎用）
+• plan / 规划 - 生成今明两天的任务规划
 
 🤖 模型管理：
 • models - 查看所有可用模型
@@ -392,6 +395,138 @@ class CommandService:
             import traceback
             traceback.print_exc()
             return f"[sys] ❌ 切换模型失败：{str(e)}"
+    
+    def _generate_plan(self, user_id):
+        """
+        生成任务规划
+        
+        Args:
+            user_id: 用户ID
+            
+        Returns:
+            规划文本
+        """
+        if not self.app_context:
+            return "[sys] ❌ 规划功能不可用"
+        
+        try:
+            # 导入必要的模块
+            from datetime import datetime, timedelta
+            
+            # 获取今天和明天的任务
+            today_todos = self.todo_service.get_today_todos(user_id)
+            tomorrow_todos = self.todo_service.get_tomorrow_todos(user_id)
+            
+            # 如果没有任务，给出提示
+            if not today_todos and not tomorrow_todos:
+                return "[sys] 📝 您暂时没有今天和明天的待办任务，先休息一下吧！"
+            
+            # 构建任务详细信息
+            def format_task_details(todo):
+                """格式化任务详细信息"""
+                details = []
+                details.append(f"• 任务：{todo.content}")
+                
+                if todo.notes:
+                    details.append(f"  备注：{todo.notes}")
+                
+                if todo.due_date:
+                    due_str = todo.due_date.strftime('%Y-%m-%d %H:%M')
+                    # 计算距离现在的时间
+                    time_diff = todo.due_date - datetime.now()
+                    hours = int(time_diff.total_seconds() / 3600)
+                    if hours < 0:
+                        details.append(f"  截止时间：{due_str} (已超时 {abs(hours)} 小时)")
+                    elif hours < 24:
+                        details.append(f"  截止时间：{due_str} (剩余 {hours} 小时)")
+                    else:
+                        days = int(hours / 24)
+                        details.append(f"  截止时间：{due_str} (剩余 {days} 天)")
+                
+                created_str = todo.created_at.strftime('%Y-%m-%d %H:%M')
+                details.append(f"  创建时间：{created_str}")
+                
+                return "\n".join(details)
+            
+            # 格式化今天的任务
+            today_text = ""
+            if today_todos:
+                today_text = f"【今天的待办】(共{len(today_todos)}个)\n"
+                today_text += "\n".join([format_task_details(todo) for todo in today_todos])
+            else:
+                today_text = "【今天的待办】\n无"
+            
+            # 格式化明天的任务
+            tomorrow_text = ""
+            if tomorrow_todos:
+                tomorrow_text = f"【明天的待办】(共{len(tomorrow_todos)}个)\n"
+                tomorrow_text += "\n".join([format_task_details(todo) for todo in tomorrow_todos])
+            else:
+                tomorrow_text = "【明天的待办】\n无"
+            
+            # 获取 llm_service 并生成规划
+            llm_service = self.app_context.llm_service
+            
+            # 获取规划提示词
+            prompt_manager = self.app_context.prompt_manager
+            planning_prompt = prompt_manager.get_prompt(
+                'task_planning_prompt',
+                today_tasks=today_text,
+                tomorrow_tasks=tomorrow_text,
+                current_time=datetime.now().strftime('%Y年%m月%d日 %H:%M')
+            )
+            
+            # 调用 LLM 生成规划（不使用function calling，纯文本对话）
+            # 使用 OpenAI SDK 的简单对话模式
+            if llm_service.use_genai_sdk:
+                # 使用 Google Genai SDK
+                from google import genai
+                from google.genai import types
+                
+                contents = [
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=planning_prompt)]
+                    )
+                ]
+                
+                generate_config = types.GenerateContentConfig(
+                    temperature=0.7,
+                    max_output_tokens=2000
+                )
+                
+                response = llm_service.genai_client.models.generate_content(
+                    model=llm_service.model,
+                    contents=contents,
+                    config=generate_config
+                )
+                
+                plan_text = response.text if hasattr(response, 'text') else "抱歉，无法生成规划。"
+                
+            else:
+                # 使用 OpenAI SDK
+                response = llm_service.client.chat.completions.create(
+                    model=llm_service.model,
+                    messages=[
+                        {"role": "system", "content": "你是一个专业的任务规划助手，善于分析任务的轻重缓急，制定科学合理的执行计划。"},
+                        {"role": "user", "content": planning_prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                plan_text = response.choices[0].message.content
+            
+            # 添加系统标记
+            result = f"[sys] 📋 任务规划建议\n\n{plan_text}"
+            
+            print(f"✅ 用户 {user_id} 生成任务规划成功")
+            return result
+            
+        except Exception as e:
+            print(f"❌ 生成任务规划失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"[sys] ❌ 生成规划失败：{str(e)}"
     
     def get_all_commands(self):
         """
