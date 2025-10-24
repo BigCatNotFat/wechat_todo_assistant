@@ -51,7 +51,7 @@ system_prompt: |
   【待办工具】
   - create_todo：用户明确要记录/添加某个待办时
   - get_todo_list：用户明确要查看任务列表时
-  - complete_todo：用户明确说完成某个任务时
+  - complete_todo：用户明确说完成某个任务时，注意不要直接调用complete_todo函数，而是先调用get_todo_list查询有哪些任务，然后根据查询结果来进行匹配完成了哪个任务！!!
   - delete_todo：用户明确要删除任务时
   - update_todo：用户明确要修改任务时
   注意：在执行上面的函数之前，应根据上下文确定任务id，当无法确定时先调用get_todo_list函数查询有哪些任务，然后根据查询到的任务使用query参数模糊匹配！
